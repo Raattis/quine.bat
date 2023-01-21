@@ -1,5 +1,5 @@
 # quine.bat
-I didn't set out to make a Quine. It just happened that way.
+I didn't set out to make a [Quine](https://en.wikipedia.org/wiki/Quine_(computing)). It just happened that way.
 
 # How to run
 * Download and unzip [TinyCC](http://download.savannah.gnu.org/releases/tinycc/) (Tested with tcc-0.9.27-win64-bin.zip)
