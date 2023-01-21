@@ -1,5 +1,4 @@
 @goto build
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +16,7 @@ void _start()
 	exit(ret);
 }
 
+const char* _source_string;
 int main(int argc, char **argv)
 {
 	if (strstr(argv[0], "--source"))
@@ -67,8 +67,7 @@ echo #include ^<string.h^>
 echo void _start(^) {
 echo FILE *infile = fopen("%filename%", "r"^), *outfile = fopen("%c_filename%", "w"^);
 echo FILE *start = outfile;
-echo fseek(infile, strlen("@goto build"^), SEEK_SET^);
-echo fputs("const char* _source_string;\n", outfile^);
+echo fseek(infile, strlen("@goto build"^)+1, SEEK_SET^);
 echo char buffer[1024], stop[] = ":build";
 echo while (fgets(buffer, sizeof(buffer^), infile^)^) {
 echo if (strncmp(buffer, stop, sizeof(stop^)-1^) == 0^) break;
