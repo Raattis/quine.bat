@@ -1,17 +1,15 @@
 @goto build
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <memory.h>
 #include <windows.h>
 
 void _start()
 {
 	char* commandLine = GetCommandLine();
-	printf("Hello, world! %s\n", commandLine);
+	printf("%s\n", commandLine);
+	printf("Hello, world!\n");
 	int main(int, char**);
 	int ret = main(1, &commandLine);
-	printf("Lobbu!\n");
+	printf("The end!\n");
 	void exit(int);
 	exit(ret);
 }
@@ -32,18 +30,20 @@ int main(int argc, char **argv)
 :build
 @echo off
 
+rem name_of_this_file>.<ext_of_this_file>
 set filename=%~n0%~x0
 set c_filename=%~n0.c
-set output_filename=%~n0.exe
+set output_exe=%~n0.exe
 
 if NOT EXIST %filename% (
 	echo This file is missing?!
 	exit 1
 )
 
-set compiler=static-tcc
+set compiler=
 if EXIST static-tcc.exe (
 	echo Using static-tcc.exe as compiler
+	set compiler=static-tcc
 ) else if EXIST tcc.exe (
 	echo Using tcc.exe as compiler
 	set compiler=tcc
@@ -52,19 +52,21 @@ if EXIST static-tcc.exe (
 	exit 1
 )
 
-if EXIST ../../tcc.c (
-	echo Rebuilding Tiny C Compiler. '../../tcc.c' was found so why not.
+set tcc_c=tcc.c
+if EXIST %tcc_c% (
+	echo Rebuilding Tiny C Compiler. '%tcc_c%' was found so why not.
 	if EXIST %compiler%.exe ( MOVE /Y %compiler%.exe %compiler%-old.exe 1> nul )
-	rem ../../tcc.c -- The compiler file is outside of the 
+	rem tcc.c -- The compiler file
 	rem -DTCC_TARGET_PE -- Output using Windows' executable format
 	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
-	rem -I../include & -I../include/winapi -- paths that #include <...> directives can refer to
-	rem -L../lib -- Paths that linker uses to find .def and .a files to link against
+	rem -Iinclude & -Iinclude/winapi -- paths that #include <...> directives can refer to
+	rem -Llib -- Not necessary as we will manually specify each library
 	rem -nostdinc -- Prevent any default include paths being used for compiling.
 	rem -nostdlib -- Prevent any default libraries being used for linking.
 	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
 	rem -lkernel32 & -ltcc1-64 -- Libraries required for common functions
-	.\%compiler%-old.exe -o static-tcc.exe ../../tcc.c -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -I../include -I../include/winapi -L../lib -nostdinc -lmsvcrt -lkernel32 -ltcc1-64
+	rem For this to work libtcc1-64 has to be compiled ahead of time... Maybe I'll get to it later.
+	.\%compiler%-old.exe -o static-tcc.exe ../../tcc.c -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdinc -lmsvcrt -lkernel32 -ltcc1-64
 
 	if ERRORLEVEL 1 (
 		echo/
@@ -107,30 +109,34 @@ if ERRORLEVEL 1 (
 	exit 1
 )
 
-echo Building inject.exe from inject.c
-.\%compiler%.exe inject.c -o inject.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
+(
+	echo Building inject.exe from inject.c
+	.\%compiler%.exe inject.c -o inject.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 
-if ERRORLEVEL 1 (
-	echo/
-	echo Building inject.exe failed. Error code: %ERRORLEVEL%
-	exit 1
+	if ERRORLEVEL 1 (
+		echo/
+		echo Building inject.exe failed. Error code: %ERRORLEVEL%
+		exit 1
+	)
 )
-
-echo/
-echo Running inject.exe to create %c_filename%
-.\inject.exe
-
-if ERRORLEVEL 1 (
-	echo/
-	echo inject.exe failed to run. Error code: %ERRORLEVEL%
-	exit 1
-)
-del inject.c
-del inject.exe
 
 (
-	echo Building %output_filename% from %c_filename%
-	if EXIST %output_filename% DEL %output_filename%
+	echo/
+	echo Running inject.exe to create %c_filename%
+	.\inject.exe
+
+	if ERRORLEVEL 1 (
+		echo/
+		echo inject.exe failed to run. Error code: %ERRORLEVEL%
+		exit 1
+	)
+	del inject.c
+	del inject.exe
+)
+
+(
+	echo Building %output_exe% from %c_filename%
+	if EXIST %output_exe% DEL %output_exe%
 	rem -DTCC_TARGET_PE -- Output using Windows' executable format
 	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
 	rem -I. -- Makes both #include <...> and #include \"...\" directives only refer to the root folder
@@ -138,45 +144,45 @@ del inject.exe
 	rem -nostdinc -- Prevent any default include paths being used for compiling.
 	rem -nostdlib -- Prevent any default libraries being used for linking.
 	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
-	.\%compiler%.exe %c_filename% -o %output_filename% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -L. -nostdlib -nostdinc -lmsvcrt -lkernel32
+	.\%compiler%.exe %c_filename% -o %output_exe% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -L. -nostdlib -nostdinc -lmsvcrt -lkernel32
 	rem -I. -L.
 	rem -nostdinc -nostdlib -lmsvcrt  
-)
-
-if ERRORLEVEL 1 (
-	echo/
-	echo Building %output_filename% from %c_filename% failed. Error code: %ERRORLEVEL%
-	exit 1
+	
+	if ERRORLEVEL 1 (
+		echo/
+		echo Building %output_exe% from %c_filename% failed. Error code: %ERRORLEVEL%
+		exit 1
+	)
 )
 
 rem Set to 1 to see preprocessor output
-if EXIST .\%compiler%.exe (
+rem if NOT EXIST something_that_doesnt_exist (
+if EXIST something_that_doesnt_exist (
 	echo Generating preprocessor output to %~n0_preprocessed.c
 	.\%compiler%.exe %c_filename% -E -o %~n0_preprocessed.c -nostdinc -Iinclude -Iinclude/winapi
 	
 	if ERRORLEVEL 1 (
 		echo/
-		echo Building %output_filename% from %c_filename% failed. Error code: %ERRORLEVEL%
+		echo Building %output_exe% from %c_filename% failed. Error code: %ERRORLEVEL%
 		exit 1
 	)
 )
 
-rem echo/ >> %output_filename%
-rem echo/ >> %output_filename%
-rem type %~n0_preprocessed.c >> %output_filename%
-
-echo/
-echo Running %output_filename%
-echo -------------------------------------------------------------------------------
-@echo on
-.\%output_filename% --source 2> new_%~n0.bat
-@echo off
-echo -------------------------------------------------------------------------------
-
-if ERRORLEVEL 1 (
+(
 	echo/
-	echo %output_filename% returned %ERRORLEVEL%.
-	exit 1
+	echo Running %output_exe%
+	echo -----------------------------------------------------------
+	.\%output_exe% --source 2> new_%~n0.bat
+	echo -----------------------------------------------------------
+
+	if ERRORLEVEL 1 (
+		echo/
+		echo %output_exe% returned %ERRORLEVEL%.
+		exit 1
+	)
+	
+	if EXIST new_%~n0.bat echo A new_%~n0.bat is born.
 )
+
 exit 0
 */
