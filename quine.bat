@@ -40,22 +40,23 @@ if NOT EXIST %filename% (
 	exit 1
 )
 
-set compiler=
-if EXIST static-tcc.exe (
-	echo Using static-tcc.exe as compiler
+set compiler=tcc
+if EXIST %compiler%.exe (
+	rem nop
+) else if EXIST static-tcc.exe (
 	set compiler=static-tcc
 ) else if EXIST tcc.exe (
-	echo Using tcc.exe as compiler
 	set compiler=tcc
 ) else (
 	echo tcc.exe needs to be in the same folder as %filename%.
 	exit 1
 )
+echo Using %compiler%.exe as compiler
 
 set tcc_c=tcc.c
 if EXIST %tcc_c% (
 	echo Rebuilding Tiny C Compiler. '%tcc_c%' was found so why not.
-	if EXIST %compiler%.exe ( MOVE /Y %compiler%.exe %compiler%-old.exe 1> nul )
+	if EXIST %compiler%.exe ( COPY /Y %compiler%.exe %compiler%-old.exe 1> nul )
 	rem tcc.c -- The compiler file
 	rem -DTCC_TARGET_PE -- Output using Windows' executable format
 	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
@@ -67,8 +68,10 @@ if EXIST %tcc_c% (
 	rem -lkernel32 & -ltcc1-64 -- Libraries required for common functions
 	rem For this to work libtcc1-64 has to be compiled ahead of time... Maybe I'll get to it later.
 	.\%compiler%-old.exe -o static-tcc.exe ../../tcc.c -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdinc -lmsvcrt -lkernel32 -ltcc1-64
-
+	
 	if ERRORLEVEL 1 (
+		COPY /Y %compiler%-old.exe %compiler%.exe 1> nul
+		DEL %compiler%-old.exe
 		echo/
 		echo Building compiler failed. Error code: %ERRORLEVEL%
 		exit 1
@@ -86,8 +89,7 @@ echo Concatenating inject.c
 	echo #include ^<stdio.h^>
 	echo #include ^<string.h^>
 	echo void _start(^) {
-	echo FILE *infile = fopen("%filename%", "r"^), *outfile = fopen("%c_filename%", "w"^);
-	echo FILE *start = outfile;
+	echo FILE*infile=fopen("%filename%","r"^),*outfile=fopen("%c_filename%","w"^);
 	echo fseek(infile, strlen("@goto build"^)+1, SEEK_SET^);
 	echo char buffer[1024], stop[] = ":build";
 	echo while (fgets(buffer, sizeof(buffer^), infile^)^) {
@@ -144,7 +146,7 @@ if ERRORLEVEL 1 (
 	rem -nostdinc -- Prevent any default include paths being used for compiling.
 	rem -nostdlib -- Prevent any default libraries being used for linking.
 	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
-	.\%compiler%.exe %c_filename% -o %output_exe% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -L. -nostdlib -nostdinc -lmsvcrt -lkernel32
+	.\%compiler%.exe %c_filename% -o %output_exe% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32
 	rem -I. -L.
 	rem -nostdinc -nostdlib -lmsvcrt  
 	
