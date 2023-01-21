@@ -36,54 +36,79 @@ set filename=%~n0%~x0
 set c_filename=%~n0.c
 set output_filename=%~n0.exe
 
-if NOT EXIST %filename% ( exit 1 )
-
-echo Rebuilding Tiny C Compiler
-if EXIST static-tcc.exe ( MOVE /Y static-tcc.exe static-tcc-old.exe 1> nul )
-rem ../../tcc.c -- The compiler file is outside of the 
-rem -DTCC_TARGET_PE -- Output using Windows' executable format
-rem -DTCC_TARGET_X86_64 -- Output x64 machine code
-rem -I../include & -I../include/winapi -- paths that #include <...> directives can refer to
-rem -L../lib -- Paths that linker uses to find .def and .a files to link against
-rem -nostdinc -- Prevent any default include paths being used for compiling.
-rem -nostdlib -- Prevent any default libraries being used for linking.
-rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
-rem -lkernel32 & -ltcc1-64 -- Libraries required for common functions
-.\static-tcc-old.exe -o static-tcc.exe ../../tcc.c -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -I../include -I../include/winapi -L../lib -nostdinc -lmsvcrt -lkernel32 -ltcc1-64
-
-if ERRORLEVEL 1 (
-	echo/
-	echo Building compiler failed. Error code: %ERRORLEVEL%
+if NOT EXIST %filename% (
+	echo This file is missing?!
 	exit 1
+)
+
+set compiler=static-tcc
+if EXIST static-tcc.exe (
+	echo Using static-tcc.exe as compiler
+) else if EXIST tcc.exe (
+	echo Using tcc.exe as compiler
+	set compiler=tcc
+) else (
+	echo tcc.exe needs to be in the same folder as %filename%.
+	exit 1
+)
+
+if EXIST ../../tcc.c (
+	echo Rebuilding Tiny C Compiler. '../../tcc.c' was found so why not.
+	if EXIST %compiler%.exe ( MOVE /Y %compiler%.exe %compiler%-old.exe 1> nul )
+	rem ../../tcc.c -- The compiler file is outside of the 
+	rem -DTCC_TARGET_PE -- Output using Windows' executable format
+	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
+	rem -I../include & -I../include/winapi -- paths that #include <...> directives can refer to
+	rem -L../lib -- Paths that linker uses to find .def and .a files to link against
+	rem -nostdinc -- Prevent any default include paths being used for compiling.
+	rem -nostdlib -- Prevent any default libraries being used for linking.
+	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
+	rem -lkernel32 & -ltcc1-64 -- Libraries required for common functions
+	.\%compiler%-old.exe -o static-tcc.exe ../../tcc.c -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -I../include -I../include/winapi -L../lib -nostdinc -lmsvcrt -lkernel32 -ltcc1-64
+
+	if ERRORLEVEL 1 (
+		echo/
+		echo Building compiler failed. Error code: %ERRORLEVEL%
+		exit 1
+	)
 )
 
 echo/
 echo Concatenating inject.c
 > inject.c (
-rem ^ is a Batch script escape character. Where it is needed seems to be largely
-rem random. There is no logic to their placement, only trial and error.
-echo #include ^<stdio.h^>
-echo #include ^<string.h^>
-echo void _start(^) {
-echo FILE *infile = fopen("%filename%", "r"^), *outfile = fopen("%c_filename%", "w"^);
-echo FILE *start = outfile;
-echo fseek(infile, strlen("@goto build"^)+1, SEEK_SET^);
-echo char buffer[1024], stop[] = ":build";
-echo while (fgets(buffer, sizeof(buffer^), infile^)^) {
-echo if (strncmp(buffer, stop, sizeof(stop^)-1^) == 0^) break;
-echo fputs(buffer, outfile^); }
-echo fseek(infile, 0, SEEK_SET^); fseek(outfile, -6, SEEK_CUR^);
-echo fputs("\nconst char* _source_string =\n\"", outfile);
-echo int c; while ((c = fgetc(infile^)^) != EOF^) {
-echo if (c == '\n'^) { fputs("\"\n\"\\n", outfile^); }
-echo if (c == '\n' ^|^| c == '\r'^) continue;
-echo if (c == '\\' ^|^| c == '"') fputc('\\', outfile);
-echo fputc(c, outfile^); }
-echo fputs("\";", outfile); fclose(infile); fclose(outfile); void exit(int); exit(0); }
+	rem Creating a C program to act as a script to copy some text.
+	rem Batch is even worse at handling strings.
+	rem About this code:
+	rem '^' is a Batch script escape character. Where it is needed seems to be largely
+	rem random. There is no logic here, only trial and error.
+	echo #include ^<stdio.h^>
+	echo #include ^<string.h^>
+	echo void _start(^) {
+	echo FILE *infile = fopen("%filename%", "r"^), *outfile = fopen("%c_filename%", "w"^);
+	echo FILE *start = outfile;
+	echo fseek(infile, strlen("@goto build"^)+1, SEEK_SET^);
+	echo char buffer[1024], stop[] = ":build";
+	echo while (fgets(buffer, sizeof(buffer^), infile^)^) {
+	echo if (strncmp(buffer, stop, sizeof(stop^)-1^) == 0^) break;
+	echo fputs(buffer, outfile^); }
+	echo fseek(infile, 0, SEEK_SET^); fseek(outfile, -6, SEEK_CUR^);
+	echo fputs("\nconst char* _source_string =\n\"", outfile);
+	echo int c; while ((c = fgetc(infile^)^) != EOF^) {
+	echo if (c == '\n'^) { fputs("\"\n\"\\n", outfile^); }
+	echo if (c == '\n' ^|^| c == '\r'^) continue;
+	echo if (c == '\\' ^|^| c == '"') fputc('\\', outfile);
+	echo fputc(c, outfile^); }
+	echo fputs("\";", outfile); fclose(infile); fclose(outfile); void exit(int); exit(0); }
+)
+
+if ERRORLEVEL 1 (
+	echo/
+	echo Concatenating inject.c failed. Error code: %ERRORLEVEL%
+	exit 1
 )
 
 echo Building inject.exe from inject.c
-.\static-tcc.exe inject.c -o inject.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -I../include -I../include/winapi -L. -nostdlib -lmsvcrt
+.\%compiler%.exe inject.c -o inject.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 
 if ERRORLEVEL 1 (
 	echo/
@@ -103,19 +128,20 @@ if ERRORLEVEL 1 (
 del inject.c
 del inject.exe
 
-echo Building %output_filename% from %c_filename%
-if EXIST %output_filename% ( DEL %output_filename% )
-rem -DTCC_TARGET_PE -- Output using Windows' executable format
-rem -DTCC_TARGET_X86_64 -- Output x64 machine code
-rem -I. -- Makes both #include <...> and #include \"...\" directives only refer to the root folder
-rem -L. -- Only links against .def and .a files found in the root folder
-rem -nostdinc -- Prevent any default include paths being used for compiling.
-rem -nostdlib -- Prevent any default libraries being used for linking.
-rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
-.\static-tcc.exe %c_filename% -o %output_filename% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -I../include -I../include/winapi -L.
-rem -nostdlib -nostdinc -I../include -I../include/winapi -l../msvcrt -l../kernel32
-rem -I. -L.
-rem -nostdinc -nostdlib -lmsvcrt  
+(
+	echo Building %output_filename% from %c_filename%
+	if EXIST %output_filename% DEL %output_filename%
+	rem -DTCC_TARGET_PE -- Output using Windows' executable format
+	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
+	rem -I. -- Makes both #include <...> and #include \"...\" directives only refer to the root folder
+	rem -L. -- Only links against .def and .a files found in the root folder
+	rem -nostdinc -- Prevent any default include paths being used for compiling.
+	rem -nostdlib -- Prevent any default libraries being used for linking.
+	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
+	.\%compiler%.exe %c_filename% -o %output_filename% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -L. -nostdlib -nostdinc -lmsvcrt -lkernel32
+	rem -I. -L.
+	rem -nostdinc -nostdlib -lmsvcrt  
+)
 
 if ERRORLEVEL 1 (
 	echo/
@@ -123,13 +149,16 @@ if ERRORLEVEL 1 (
 	exit 1
 )
 
-rem Uncomment to see preprocessor output
-rem .\static-tcc.exe %c_filename% -E -o %~n0_preprocessed.c -I. -nostdinc
-
-if ERRORLEVEL 1 (
-	echo/
-	echo Building %output_filename% from %c_filename% failed. Error code: %ERRORLEVEL%
-	exit 1
+rem Set to 1 to see preprocessor output
+if EXIST .\%compiler%.exe (
+	echo Generating preprocessor output to %~n0_preprocessed.c
+	.\%compiler%.exe %c_filename% -E -o %~n0_preprocessed.c -nostdinc -Iinclude -Iinclude/winapi
+	
+	if ERRORLEVEL 1 (
+		echo/
+		echo Building %output_filename% from %c_filename% failed. Error code: %ERRORLEVEL%
+		exit 1
+	)
 )
 
 rem echo/ >> %output_filename%
