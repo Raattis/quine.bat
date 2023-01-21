@@ -30,7 +30,7 @@ int main(int argc, char **argv)
 :build
 @echo off
 
-rem name_of_this_file>.<ext_of_this_file>
+rem <name_of_this_file>.<ext_of_this_file>
 set filename=%~n0%~x0
 set c_filename=%~n0.c
 set output_exe=%~n0.exe
