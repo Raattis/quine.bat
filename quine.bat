@@ -25,7 +25,7 @@ int main(int argc, char **argv)
 	}
     return 0;
 }
-
+// source_end
 /*
 :build
 @echo off
@@ -78,37 +78,44 @@ if EXIST %tcc_c% (
 	)
 )
 
-echo/
-echo Concatenating inject.c
-> inject.c (
-	rem Creating a C program to act as a script to copy some text.
-	rem Batch is even worse at handling strings.
-	rem About this code:
-	rem '^' is a Batch script escape character. Where it is needed seems to be largely
-	rem random. There is no logic here, only trial and error.
-	echo #include ^<stdio.h^>
-	echo #include ^<string.h^>
-	echo void _start(^) {
-	echo FILE*infile=fopen("%filename%","r"^),*outfile=fopen("%c_filename%","w"^);
-	echo fseek(infile, strlen("@goto build"^)+1, SEEK_SET^);
-	echo char buffer[1024], stop[] = ":build";
-	echo while (fgets(buffer, sizeof(buffer^), infile^)^) {
-	echo if (strncmp(buffer, stop, sizeof(stop^)-1^) == 0^) break;
-	echo fputs(buffer, outfile^); }
-	echo fseek(infile, 0, SEEK_SET^); fseek(outfile, -6, SEEK_CUR^);
-	echo fputs("\nconst char* _source_string =\n\"", outfile);
-	echo int c; while ((c = fgetc(infile^)^) != EOF^) {
-	echo if (c == '\n'^) { fputs("\"\n\"\\n", outfile^); }
-	echo if (c == '\n' ^|^| c == '\r'^) continue;
-	echo if (c == '\\' ^|^| c == '"') fputc('\\', outfile);
-	echo fputc(c, outfile^); }
-	echo fputs("\";", outfile); fclose(infile); fclose(outfile); void exit(int); exit(0); }
-)
-
-if ERRORLEVEL 1 (
+(
 	echo/
-	echo Concatenating inject.c failed. Error code: %ERRORLEVEL%
-	exit 1
+	echo Concatenating inject.c
+	> inject.c (
+		rem Creating a C program to act as a script to copy some text.
+		rem Batch is even worse at handling strings.
+		rem About this code:
+		rem '^' is a Batch script escape character. Where it is needed seems to be largely
+		rem random. There is no logic here, only trial and error.
+		echo #include ^<stdio.h^>
+		echo #include ^<string.h^>
+		echo void _start(^) {
+		echo FILE*in=fopen("%filename%","r"^),*out=fopen("fat_injector.c","w"^);
+		echo char b[32], s[]="// fat_injector_start", e[]="// fat_injector_end";
+		echo while (fgets(b, sizeof(b^), in^)^)
+		echo if (strncmp(b, s, sizeof(s^)-1^) == 0^) break;
+		echo while (fgets(b, sizeof(b^), in^)^) {
+		echo if (strncmp(b, e, sizeof(e^)-1^) == 0^) break;
+		echo fputs(b, out^); }
+		echo fseek(in, 0, SEEK_SET^);
+		echo fputs("\nconst char* _source_filename=\"%filename%\";", out^);
+		echo fputs("\nconst char* _output_filename=\"%c_filename%\";", out^);
+		echo fputs("\nconst char* _output_exe=\"%output_exe%\";", out^);
+		echo fputs("\nconst char* _compiler_bin=\".\\\\%compiler%.exe\";", out^);
+		echo fputs("\nconst char* _source_string =\n\"", out);
+		echo int c; while((c=fgetc(in^)^)!=EOF^) {
+		echo if (c=='\n'^) fputs("\"\n\"\\n", out^);
+		echo if (c=='\n'^|^|c=='\r'^) continue;
+		echo if (c=='\\'^|^|c=='"') fputc('\\', out);
+		echo fputc(c, out^); }
+		echo fputs("\";", out); fclose(in); fclose(out); void exit(int); exit(0); }
+	)
+
+	if ERRORLEVEL 1 (
+		echo/
+		echo Concatenating inject.c failed. Error code: %ERRORLEVEL%
+		exit 1
+	)
 )
 
 (
@@ -124,7 +131,7 @@ if ERRORLEVEL 1 (
 
 (
 	echo/
-	echo Running inject.exe to create %c_filename%
+	echo Running inject.exe to create fat_injector.c
 	.\inject.exe
 
 	if ERRORLEVEL 1 (
@@ -132,8 +139,88 @@ if ERRORLEVEL 1 (
 		echo inject.exe failed to run. Error code: %ERRORLEVEL%
 		exit 1
 	)
-	del inject.c
+	rem del inject.c
 	del inject.exe
+)
+
+goto fat_injector_end
+*/
+// fat_injector_start
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void _start()
+{
+	extern const char* _source_filename;
+	extern const char* _output_filename;
+	extern const char* _output_exe;
+	extern const char* _compiler_bin;
+    FILE *infile = fopen(_source_filename, "r");
+	FILE *outfile = fopen(_output_filename, "w");
+    char buffer[1024];
+	char start[] = "@goto build";
+	char stop[] = "// source_end";
+    while (fgets(buffer, sizeof(buffer), infile))
+        if (strncmp(buffer, start, sizeof(start) - 1) == 0) break;
+    while (fgets(buffer, sizeof(buffer), infile)) {
+        if (strncmp(buffer, stop, sizeof(stop) - 1) == 0) break;
+        fputs(buffer, outfile);
+    }
+    fseek(infile, 0, SEEK_SET);
+    fputs("\nconst char* _source_string =\n\"", outfile);
+    int c;
+    while ((c = fgetc(infile)) != EOF) {
+        if (c == '\n') fputs("\"\n\"\\n", outfile);
+        if (c == '\n' || c == '\r') continue;
+        if (c == '\\' || c == '"') fputc('\\', outfile);
+        fputc(c, outfile);
+    }
+    fputs("\";", outfile);
+    fclose(infile);
+    fclose(outfile);
+	
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32", _compiler_bin, _output_filename, _output_exe);
+	int result = system(buffer);
+	
+    void exit(int);
+	if (result != 0)
+		exit(result);
+
+	printf("RUNNING -----------------------\n");
+	result = system(_output_exe);
+	printf("DONE --------------------------\n");
+	printf("Return value: %d\n", result);
+	
+	exit(0);
+}
+// fat_injector_end
+/*
+:fat_injector_end
+
+(
+	echo Building fat_injector.exe from fat_injector.c
+	.\%compiler%.exe fat_injector.c -o fat_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
+
+	if ERRORLEVEL 1 (
+		echo/
+		echo Building fat_injector.exe failed. Error code: %ERRORLEVEL%
+		exit 1
+	)
+)
+
+(
+	echo/
+	echo Running fat_injector.exe to create %c_filename%
+	.\fat_injector.exe
+
+	if ERRORLEVEL 1 (
+		echo/
+		echo fat_injector.exe failed to run. Error code: %ERRORLEVEL%
+		exit 1
+	)
+	rem del fat_injector.c
+	del fat_injector.exe
 )
 
 (
