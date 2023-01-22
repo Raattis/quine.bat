@@ -3,9 +3,6 @@
 #include <stdio.h>
 #include <windows.h>
 
-extern char* strstr(const char*, const char*);
-extern char* GetCommandLine();
-
 void _start()
 {
 	void exit(int);
@@ -58,7 +55,7 @@ if NOT EXIST %filename% (
 	exit 1
 )
 
-set compiler=tcc
+set compiler=static-tcc
 if EXIST %compiler%.exe (
 	rem nop
 ) else if EXIST static-tcc.exe (
@@ -69,7 +66,7 @@ if EXIST %compiler%.exe (
 	echo tcc.exe needs to be in the same folder as %filename%.
 	exit 1
 )
-echo Using %compiler%.exe as compiler
+if defined verbose echo Using %compiler%.exe as compiler
 
 set step=Rebuilding Tiny C Compiler
 set tcc_c=tcc.c
@@ -173,48 +170,82 @@ exit 1
 #include <stdlib.h>
 #include <string.h>
 
+char buffer[16 * 1024 * 1024];
+int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile)
+{
+	if (start) {
+		int start_len = strlen(start);
+		while (fgets(buffer, sizeof(buffer), infile))
+			if (strncmp(buffer, start, start_len) == 0) break;
+	}
+	
+	if (stop) {
+		int stop_len = stop ? strlen(stop) : 0;
+		while (fgets(buffer, sizeof(buffer), infile)) {
+			if (stop && strncmp(buffer, stop, stop_len) == 0) break;
+			fputs(buffer, outfile);
+		}
+	}
+	else
+	{
+		while (fgets(buffer, sizeof(buffer), infile))
+			fputs(buffer, outfile);
+	}
+}
+
+void insert_file_as_string(FILE* infile, FILE* outfile)
+{
+	fputc('"', outfile);
+	int c;
+	while ((c = fgetc(infile)) != EOF) {
+		if (c == '\n') fputs("\"\n\"\\n", outfile);
+		if (c == '\n' || c == '\r') continue;
+		if (c == '\\' || c == '"') fputc('\\', outfile);
+		fputc(c, outfile);
+	}
+	fputc('"', outfile);
+}
+
+int create_code_file(const char* start, const char* stop, const char* input_filename, const char* output_c)
+{
+	FILE *infile = fopen(input_filename, "r");
+	FILE *outfile = fopen(output_c, "w");
+	
+	insert_snippet(start, stop, infile, outfile);
+	
+	fseek(infile, 0, SEEK_SET);
+	
+	fputs("\nconst char* _source_string = \"\"\n", outfile);
+	insert_file_as_string(infile, outfile);
+	fputc(';', outfile);
+	
+	fclose(infile);
+	fclose(outfile);
+}
+
+int compile(const char* output_c, const char* output_exe)
+{
+	extern const char* _compiler_bin;
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -bench", _compiler_bin, output_c, output_exe);
+	// -L. -vv 
+	int result = system(buffer);
+	return result;
+}
+
 void _start()
 {
-	extern const char* _source_filename;
 	extern const char* _output_c;
 	extern const char* _output_exe;
-	extern const char* _compiler_bin;
-    FILE *infile = fopen(_source_filename, "r");
-	FILE *outfile = fopen(_output_c, "w");
-    char buffer[1024];
-	char start[] = "// source_start";
-	char stop[] = "// source_end";
-    while (fgets(buffer, sizeof(buffer), infile))
-        if (strncmp(buffer, start, sizeof(start) - 1) == 0) break;
-    while (fgets(buffer, sizeof(buffer), infile)) {
-        if (strncmp(buffer, stop, sizeof(stop) - 1) == 0) break;
-        fputs(buffer, outfile);
-    }
-    fseek(infile, 0, SEEK_SET);
+	extern const char* _source_filename;
+	create_code_file("// source_start", "// source_end", _source_filename, _output_c);
 	
-	fprintf(outfile, "\nconst char* _compiler_run_fmt =\"%s %%s -o %%s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32\";", _compiler_bin);
-    fputs("\nconst char* _source_string =\n\"", outfile);
-    int c;
-    while ((c = fgetc(infile)) != EOF) {
-        if (c == '\n') fputs("\"\n\"\\n", outfile);
-        if (c == '\n' || c == '\r') continue;
-        if (c == '\\' || c == '"') fputc('\\', outfile);
-        fputc(c, outfile);
-    }
-    fputs("\";", outfile);
-    fclose(infile);
-    fclose(outfile);
+	int err = compile(_output_c, _output_exe);
+	if (err != 0)
+		exit(err);
 	
-	snprintf(buffer, sizeof(buffer), "%s %s -o %s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32", _compiler_bin, _output_c, _output_exe);
-	int result = system(buffer);
-	
-    void exit(int);
-	if (result != 0)
-		exit(result);
-
 	snprintf(buffer, sizeof(buffer), "%s --!compile --!source", _output_exe);
 	printf("---------------------------------------\n");
-	result = system(buffer);
+	int result = system(buffer);
 	printf("---------------------------------------\n");
 	printf("%s returned %d\n", _output_exe, result);
 	
