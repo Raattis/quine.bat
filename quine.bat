@@ -3,28 +3,44 @@
 #include <stdio.h>
 #include <windows.h>
 
+extern char* strstr(const char*, const char*);
+extern char* GetCommandLine();
+
 void _start()
 {
-	char* commandLine = GetCommandLine();
-	printf("%s\n", commandLine);
-	printf("Hello, world!\n");
-	int main(int, char**);
-	int ret = main(1, &commandLine);
-	printf("The end!\n");
 	void exit(int);
-	exit(ret);
-}
-
-const char* _source_string;
-int main(int argc, char **argv)
-{
-	if (strstr(argv[0], "--source"))
+	char* commandLine = GetCommandLine();
+	printf("Hello, world!\n");
+	
+	
+	if (strstr(commandLine, "--source"))
 	{
 		printf("Here's my source (in stderr):\n\"\"\"\n");
+		extern const char* _source_string;
 		fprintf(stderr, "%s", _source_string);
 		printf("\"\"\"\n");
 	}
-    return 0;
+	
+	if (strstr(commandLine, "--compile"))
+	{
+		char bat_filename[1024];
+		char* head = bat_filename;
+		int len = 0;
+		int err = sscanf(commandLine, "%s%n", bat_filename, &len);
+		if (err != 1) exit(1);
+		printf("bat_filename:'%s' %d\n", bat_filename, len);
+		if (bat_filename[len-1] == '"')
+			sprintf(bat_filename + len - 4, "bat\"");
+		else
+			sprintf(bat_filename + len - 3, "bat");
+		
+		printf("bat_filename:'%s' %d\n", bat_filename, len);
+		int system(char*);
+		system(bat_filename);
+	}
+	
+	printf("The end!\n");
+	exit(0);
 }
 // source_end
 /*
@@ -35,6 +51,7 @@ rem <name_of_this_file>.<ext_of_this_file>
 set filename=%~n0%~x0
 set c_filename=%~n0.c
 set output_exe=%~n0.exe
+set verbose=
 
 if NOT EXIST %filename% (
 	echo This file is missing?!
@@ -57,7 +74,7 @@ echo Using %compiler%.exe as compiler
 set step=Rebuilding Tiny C Compiler
 set tcc_c=tcc.c
 if EXIST %tcc_c% (
-	echo %step%. '%tcc_c%' was found so why not.
+	if defined verbose echo %step%. '%tcc_c%' was found so why not.
 	if EXIST %compiler%.exe ( COPY /Y %compiler%.exe %compiler%-old.exe 1> nul )
 	rem tcc.c -- The compiler file
 	rem -DTCC_TARGET_PE -- Output using Windows' executable format
@@ -81,7 +98,7 @@ if EXIST %tcc_c% (
 set step=Concatenating slim_injector.c
 (
 	echo/
-	echo %step%
+	if defined verbose echo %step%
 	> slim_injector.c (
 		rem Creating a C program to act as a script to copy some text.
 		rem Batch is even worse at handling strings.
@@ -111,7 +128,7 @@ set step=Concatenating slim_injector.c
 
 set step=Building slim_injector.exe from slim_injector.c
 (
-	echo %step%
+	if defined verbose echo %step%
 	.\%compiler%.exe slim_injector.c -o slim_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 
 	if ERRORLEVEL 1 goto error
@@ -119,7 +136,7 @@ set step=Building slim_injector.exe from slim_injector.c
 
 set step=Running slim_injector.exe to create fat_injector.c
 (
-	echo %step%
+	if defined verbose echo %step%
 	.\slim_injector.exe
 	if ERRORLEVEL 1 goto error
 	rem del slim_injector.c
@@ -128,15 +145,15 @@ set step=Running slim_injector.exe to create fat_injector.c
 
 set step=Building fat_injector.exe from fat_injector.c
 (
-	echo %step%
+	if defined verbose echo %step%
 	.\%compiler%.exe fat_injector.c -o fat_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 	
 	if ERRORLEVEL 1 goto error
 )
 
-set step=Running fat_injector.exe to create %c_filename%, compile it into %output_exe% and run it.
+set step=Running fat_injector.exe to create %c_filename%, compile it into %output_exe% and run it
 (
-	echo %step%
+	if defined verbose echo %step%.
 	.\fat_injector.exe
 	if ERRORLEVEL 1 goto error
 	rem del fat_injector.c
@@ -174,6 +191,8 @@ void _start()
         fputs(buffer, outfile);
     }
     fseek(infile, 0, SEEK_SET);
+	
+	fprintf(outfile, "\nconst char* _compiler_run_fmt =\"%s %%s -o %%s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32\";", _compiler_bin);
     fputs("\nconst char* _source_string =\n\"", outfile);
     int c;
     while ((c = fgetc(infile)) != EOF) {
@@ -193,7 +212,7 @@ void _start()
 	if (result != 0)
 		exit(result);
 
-	snprintf(buffer, sizeof(buffer), "%s --source", _output_exe);
+	snprintf(buffer, sizeof(buffer), "%s --!compile --!source", _output_exe);
 	printf("---------------------------------------\n");
 	result = system(buffer);
 	printf("---------------------------------------\n");
