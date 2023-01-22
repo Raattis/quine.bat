@@ -1,4 +1,5 @@
 @goto build
+// source_start
 #include <stdio.h>
 #include <windows.h>
 
@@ -53,9 +54,10 @@ if EXIST %compiler%.exe (
 )
 echo Using %compiler%.exe as compiler
 
+set step=Rebuilding Tiny C Compiler
 set tcc_c=tcc.c
 if EXIST %tcc_c% (
-	echo Rebuilding Tiny C Compiler. '%tcc_c%' was found so why not.
+	echo %step%. '%tcc_c%' was found so why not.
 	if EXIST %compiler%.exe ( COPY /Y %compiler%.exe %compiler%-old.exe 1> nul )
 	rem tcc.c -- The compiler file
 	rem -DTCC_TARGET_PE -- Output using Windows' executable format
@@ -72,16 +74,15 @@ if EXIST %tcc_c% (
 	if ERRORLEVEL 1 (
 		COPY /Y %compiler%-old.exe %compiler%.exe 1> nul
 		DEL %compiler%-old.exe
-		echo/
-		echo Building compiler failed. Error code: %ERRORLEVEL%
-		exit 1
+		goto error
 	)
 )
 
+set step=Concatenating slim_injector.c
 (
 	echo/
-	echo Concatenating inject.c
-	> inject.c (
+	echo %step%
+	> slim_injector.c (
 		rem Creating a C program to act as a script to copy some text.
 		rem Batch is even worse at handling strings.
 		rem About this code:
@@ -99,52 +100,57 @@ if EXIST %tcc_c% (
 		echo fputs(b, out^); }
 		echo fseek(in, 0, SEEK_SET^);
 		echo fputs("\nconst char* _source_filename=\"%filename%\";", out^);
-		echo fputs("\nconst char* _output_filename=\"%c_filename%\";", out^);
+		echo fputs("\nconst char* _output_c=\"%c_filename%\";", out^);
 		echo fputs("\nconst char* _output_exe=\"%output_exe%\";", out^);
 		echo fputs("\nconst char* _compiler_bin=\".\\\\%compiler%.exe\";", out^);
-		echo fputs("\nconst char* _source_string =\n\"", out);
-		echo int c; while((c=fgetc(in^)^)!=EOF^) {
-		echo if (c=='\n'^) fputs("\"\n\"\\n", out^);
-		echo if (c=='\n'^|^|c=='\r'^) continue;
-		echo if (c=='\\'^|^|c=='"') fputc('\\', out);
-		echo fputc(c, out^); }
-		echo fputs("\";", out); fclose(in); fclose(out); void exit(int); exit(0); }
+		echo fclose(in^); fclose(out^); void exit(int^); exit(0^); }
 	)
 
-	if ERRORLEVEL 1 (
-		echo/
-		echo Concatenating inject.c failed. Error code: %ERRORLEVEL%
-		exit 1
-	)
+	if ERRORLEVEL 1 goto error
 )
 
+set step=Building slim_injector.exe from slim_injector.c
 (
-	echo Building inject.exe from inject.c
-	.\%compiler%.exe inject.c -o inject.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
+	echo %step%
+	.\%compiler%.exe slim_injector.c -o slim_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 
-	if ERRORLEVEL 1 (
-		echo/
-		echo Building inject.exe failed. Error code: %ERRORLEVEL%
-		exit 1
-	)
+	if ERRORLEVEL 1 goto error
 )
 
+set step=Running slim_injector.exe to create fat_injector.c
 (
-	echo/
-	echo Running inject.exe to create fat_injector.c
-	.\inject.exe
-
-	if ERRORLEVEL 1 (
-		echo/
-		echo inject.exe failed to run. Error code: %ERRORLEVEL%
-		exit 1
-	)
-	rem del inject.c
-	del inject.exe
+	echo %step%
+	.\slim_injector.exe
+	if ERRORLEVEL 1 goto error
+	rem del slim_injector.c
+	del slim_injector.exe
 )
 
-goto fat_injector_end
+set step=Building fat_injector.exe from fat_injector.c
+(
+	echo %step%
+	.\%compiler%.exe fat_injector.c -o fat_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
+	
+	if ERRORLEVEL 1 goto error
+)
+
+set step=Running fat_injector.exe to create %c_filename%, compile it into %output_exe% and run it.
+(
+	echo %step%
+	.\fat_injector.exe
+	if ERRORLEVEL 1 goto error
+	rem del fat_injector.c
+	del fat_injector.exe
+)
+
+exit 0
+
+:error
+echo/
+echo %step% failed. Error code: %ERRORLEVEL%
+exit 1
 */
+
 // fat_injector_start
 #include <stdio.h>
 #include <stdlib.h>
@@ -153,13 +159,13 @@ goto fat_injector_end
 void _start()
 {
 	extern const char* _source_filename;
-	extern const char* _output_filename;
+	extern const char* _output_c;
 	extern const char* _output_exe;
 	extern const char* _compiler_bin;
     FILE *infile = fopen(_source_filename, "r");
-	FILE *outfile = fopen(_output_filename, "w");
+	FILE *outfile = fopen(_output_c, "w");
     char buffer[1024];
-	char start[] = "@goto build";
+	char start[] = "// source_start";
 	char stop[] = "// source_end";
     while (fgets(buffer, sizeof(buffer), infile))
         if (strncmp(buffer, start, sizeof(start) - 1) == 0) break;
@@ -180,98 +186,17 @@ void _start()
     fclose(infile);
     fclose(outfile);
 	
-	snprintf(buffer, sizeof(buffer), "%s %s -o %s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32", _compiler_bin, _output_filename, _output_exe);
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32", _compiler_bin, _output_c, _output_exe);
 	int result = system(buffer);
 	
     void exit(int);
 	if (result != 0)
 		exit(result);
 
-	printf("RUNNING -----------------------\n");
+	printf("---------------------------------------\n");
 	result = system(_output_exe);
-	printf("DONE --------------------------\n");
-	printf("Return value: %d\n", result);
+	printf("---------------------------------------\n");
+	printf("%s returned %d\n", _output_exe, result);
 	
 	exit(0);
 }
-// fat_injector_end
-/*
-:fat_injector_end
-
-(
-	echo Building fat_injector.exe from fat_injector.c
-	.\%compiler%.exe fat_injector.c -o fat_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
-
-	if ERRORLEVEL 1 (
-		echo/
-		echo Building fat_injector.exe failed. Error code: %ERRORLEVEL%
-		exit 1
-	)
-)
-
-(
-	echo/
-	echo Running fat_injector.exe to create %c_filename%
-	.\fat_injector.exe
-
-	if ERRORLEVEL 1 (
-		echo/
-		echo fat_injector.exe failed to run. Error code: %ERRORLEVEL%
-		exit 1
-	)
-	rem del fat_injector.c
-	del fat_injector.exe
-)
-
-(
-	echo Building %output_exe% from %c_filename%
-	if EXIST %output_exe% DEL %output_exe%
-	rem -DTCC_TARGET_PE -- Output using Windows' executable format
-	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
-	rem -I. -- Makes both #include <...> and #include \"...\" directives only refer to the root folder
-	rem -L. -- Only links against .def and .a files found in the root folder
-	rem -nostdinc -- Prevent any default include paths being used for compiling.
-	rem -nostdlib -- Prevent any default libraries being used for linking.
-	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
-	.\%compiler%.exe %c_filename% -o %output_exe% -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32
-	rem -I. -L.
-	rem -nostdinc -nostdlib -lmsvcrt  
-	
-	if ERRORLEVEL 1 (
-		echo/
-		echo Building %output_exe% from %c_filename% failed. Error code: %ERRORLEVEL%
-		exit 1
-	)
-)
-
-rem Set to 1 to see preprocessor output
-rem if NOT EXIST something_that_doesnt_exist (
-if EXIST something_that_doesnt_exist (
-	echo Generating preprocessor output to %~n0_preprocessed.c
-	.\%compiler%.exe %c_filename% -E -o %~n0_preprocessed.c -nostdinc -Iinclude -Iinclude/winapi
-	
-	if ERRORLEVEL 1 (
-		echo/
-		echo Building %output_exe% from %c_filename% failed. Error code: %ERRORLEVEL%
-		exit 1
-	)
-)
-
-(
-	echo/
-	echo Running %output_exe%
-	echo -----------------------------------------------------------
-	.\%output_exe% --source 2> new_%~n0.bat
-	echo -----------------------------------------------------------
-
-	if ERRORLEVEL 1 (
-		echo/
-		echo %output_exe% returned %ERRORLEVEL%.
-		exit 1
-	)
-	
-	if EXIST new_%~n0.bat echo A new_%~n0.bat is born.
-)
-
-exit 0
-*/
