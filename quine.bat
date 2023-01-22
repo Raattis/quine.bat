@@ -193,8 +193,9 @@ void _start()
 	if (result != 0)
 		exit(result);
 
+	snprintf(buffer, sizeof(buffer), "%s --source", _output_exe);
 	printf("---------------------------------------\n");
-	result = system(_output_exe);
+	result = system(buffer);
 	printf("---------------------------------------\n");
 	printf("%s returned %d\n", _output_exe, result);
 	
