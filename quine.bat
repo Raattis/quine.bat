@@ -1,50 +1,6 @@
-@goto build
-// source_start
-#include <stdio.h>
-#include <windows.h>
-
-void _start()
-{
-	void exit(int);
-	char* commandLine = GetCommandLine();
-	printf("Hello, world!\n");
-	
-	
-	if (strstr(commandLine, "--source"))
-	{
-		printf("Here's my source (in stderr):\n\"\"\"\n");
-		extern const char* _source_string;
-		fprintf(stderr, "%s", _source_string);
-		printf("\"\"\"\n");
-	}
-	
-	if (strstr(commandLine, "--compile"))
-	{
-		char bat_filename[1024];
-		char* head = bat_filename;
-		int len = 0;
-		int err = sscanf(commandLine, "%s%n", bat_filename, &len);
-		if (err != 1) exit(1);
-		printf("bat_filename:'%s' %d\n", bat_filename, len);
-		if (bat_filename[len-1] == '"')
-			sprintf(bat_filename + len - 4, "bat\"");
-		else
-			sprintf(bat_filename + len - 3, "bat");
-		
-		printf("bat_filename:'%s' %d\n", bat_filename, len);
-		int system(char*);
-		system(bat_filename);
-	}
-	
-	printf("The end!\n");
-	exit(0);
-}
-// source_end
-/*
-:build
 @echo off
 
-rem <name_of_this_file>.<ext_of_this_file>
+rem filename=<name_of_this_file>.<ext_of_this_file>
 set filename=%~n0%~x0
 set c_filename=%~n0.c
 set output_exe=%~n0.exe
@@ -92,11 +48,11 @@ if EXIST %tcc_c% (
 	)
 )
 
-set step=Concatenating slim_injector.c
+set step=Concatenating bootstrap_builder.c
 (
 	echo/
 	if defined verbose echo %step%
-	> slim_injector.c (
+	> bootstrap_builder.c (
 		rem Creating a C program to act as a script to copy some text.
 		rem Batch is even worse at handling strings.
 		rem About this code:
@@ -105,8 +61,8 @@ set step=Concatenating slim_injector.c
 		echo #include ^<stdio.h^>
 		echo #include ^<string.h^>
 		echo void _start(^) {
-		echo FILE*in=fopen("%filename%","r"^),*out=fopen("fat_injector.c","w"^);
-		echo char b[32], s[]="// fat_injector_start", e[]="// fat_injector_end";
+		echo FILE*in=fopen("%filename%","r"^),*out=fopen("%filename%_builder.c","w"^);
+		echo char b[32], s[]="// builder_start", e[]="// builder_end";
 		echo while (fgets(b, sizeof(b^), in^)^)
 		echo if (strncmp(b, s, sizeof(s^)-1^) == 0^) break;
 		echo while (fgets(b, sizeof(b^), in^)^) {
@@ -123,38 +79,38 @@ set step=Concatenating slim_injector.c
 	if ERRORLEVEL 1 goto error
 )
 
-set step=Building slim_injector.exe from slim_injector.c
+set step=Building bootstrap_builder.exe from bootstrap_builder.c
 (
 	if defined verbose echo %step%
-	.\%compiler%.exe slim_injector.c -o slim_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
+	.\%compiler%.exe bootstrap_builder.c -o bootstrap_builder.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 
 	if ERRORLEVEL 1 goto error
 )
 
-set step=Running slim_injector.exe to create fat_injector.c
+set step=Running bootstrap_builder.exe to create %filename%_builder.c
 (
 	if defined verbose echo %step%
-	.\slim_injector.exe
+	.\bootstrap_builder.exe
 	if ERRORLEVEL 1 goto error
-	rem del slim_injector.c
-	del slim_injector.exe
+	del bootstrap_builder.c
+	del bootstrap_builder.exe
 )
 
-set step=Building fat_injector.exe from fat_injector.c
+set step=Building %filename%_builder.exe from %filename%_builder.c
 (
 	if defined verbose echo %step%
-	.\%compiler%.exe fat_injector.c -o fat_injector.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
+	.\%compiler%.exe %filename%_builder.c -o %filename%_builder.exe -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -nostdlib -lmsvcrt
 	
 	if ERRORLEVEL 1 goto error
 )
 
-set step=Running fat_injector.exe to create %c_filename%, compile it into %output_exe% and run it
+set step=Running %filename%_builder.exe to create %c_filename%, compile it into %output_exe% and run it
 (
 	if defined verbose echo %step%.
-	.\fat_injector.exe
+	.\%filename%_builder.exe
 	if ERRORLEVEL 1 goto error
-	rem del fat_injector.c
-	del fat_injector.exe
+	del %filename%_builder.c
+	del %filename%_builder.exe
 )
 
 exit 0
@@ -163,22 +119,31 @@ exit 0
 echo/
 echo %step% failed. Error code: %ERRORLEVEL%
 exit 1
-*/
 
-// fat_injector_start
+// builder_start
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-char buffer[16 * 1024 * 1024];
-int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile)
+char buffer[1024 * 1024];
+int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename)
 {
+	int line_number = 1;
 	if (start) {
 		int start_len = strlen(start);
-		while (fgets(buffer, sizeof(buffer), infile))
+		while (fgets(buffer, sizeof(buffer), infile)) {
 			if (strncmp(buffer, start, start_len) == 0) break;
+			++line_number;
+		}
 	}
-	
+
+	if (input_filename) {
+		if (input_filename[0] == '"')
+			fprintf(outfile, "#line %d %s\n", line_number, input_filename);
+		else
+			fprintf(outfile, "#line %d \"%s\"\n", line_number, input_filename);
+	}
+
 	if (stop) {
 		int stop_len = stop ? strlen(stop) : 0;
 		while (fgets(buffer, sizeof(buffer), infile)) {
@@ -210,15 +175,15 @@ int create_code_file(const char* start, const char* stop, const char* input_file
 {
 	FILE *infile = fopen(input_filename, "r");
 	FILE *outfile = fopen(output_c, "w");
-	
-	insert_snippet(start, stop, infile, outfile);
-	
+
+	insert_snippet(start, stop, infile, outfile, input_filename);
+
 	fseek(infile, 0, SEEK_SET);
-	
+
 	fputs("\nconst char* _source_string = \"\"\n", outfile);
 	insert_file_as_string(infile, outfile);
 	fputc(';', outfile);
-	
+
 	fclose(infile);
 	fclose(outfile);
 }
@@ -229,6 +194,8 @@ int compile(const char* output_c, const char* output_exe)
 	snprintf(buffer, sizeof(buffer), "%s %s -o %s -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -bench", _compiler_bin, output_c, output_exe);
 	// -L. -vv 
 	int result = system(buffer);
+	if (result != 0)
+		printf("Error while compiling '%s'. Error value: %d\n", output_c, result);
 	return result;
 }
 
@@ -238,16 +205,58 @@ void _start()
 	extern const char* _output_exe;
 	extern const char* _source_filename;
 	create_code_file("// source_start", "// source_end", _source_filename, _output_c);
-	
+
 	int err = compile(_output_c, _output_exe);
 	if (err != 0)
 		exit(err);
-	
+
 	snprintf(buffer, sizeof(buffer), "%s --!compile --!source", _output_exe);
 	printf("---------------------------------------\n");
 	int result = system(buffer);
 	printf("---------------------------------------\n");
 	printf("%s returned %d\n", _output_exe, result);
-	
+
 	exit(0);
 }
+// builder_end
+
+// source_start
+#include <stdio.h>
+#include <windows.h>
+
+void _start()
+{
+	void exit(int);
+	char* commandLine = GetCommandLine();
+	printf("Hello, world!\n");
+
+	if (strstr(commandLine, "--source"))
+	{
+		printf("Here's my source (in stderr):\n\"\"\"\n");
+		extern const char* _source_string;
+		fprintf(stderr, "%s", _source_string);
+		printf("\"\"\"\n");
+	}
+
+	if (strstr(commandLine, "--compile"))
+	{
+		char bat_filename[1024];
+		char* head = bat_filename;
+		int len = 0;
+		int err = sscanf(commandLine, "%s%n", bat_filename, &len);
+		if (err != 1) exit(1);
+		printf("bat_filename:'%s' %d\n", bat_filename, len);
+		if (bat_filename[len-1] == '"')
+			sprintf(bat_filename + len - 4, "bat\"");
+		else
+			sprintf(bat_filename + len - 3, "bat");
+
+		printf("bat_filename:'%s' %d\n", bat_filename, len);
+		int system(char*);
+		system(bat_filename);
+	}
+
+	printf("The end!\n");
+	exit(0);
+}
+// source_end
