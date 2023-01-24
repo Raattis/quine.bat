@@ -58,7 +58,7 @@ set step=Creating a bootstrap builder
 echo/
 if defined verbose echo %step%
 
-if defined verobse set c_start=fprintf(stderr,"Running bootstrap builder.\n"^);
+if defined verbose set c_start=fprintf(stderr,"Running bootstrap builder.\n"^);
 
 set c_options=fputs("\nconst char* _source_filename=\"%filename%\";",out^);fputs("\nconst char* _output_c=\"%c_filename%\";",out^);fputs("\nconst char* _output_exe=\"%output_exe%\";",out^);fputs("\nconst char* _compiler_bin=\".\\\\%compiler%.exe\";",out^);
 
