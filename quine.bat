@@ -7,7 +7,8 @@ set output_exe=%~n0.exe
 set builder_exe=%~n0_builder.exe
 set create_builder_exe=
 set create_source_file=
-set create_exe_file=
+set create_exe_file=1
+set run_exe=
 set verbose=1
 
 if NOT EXIST %filename% (
@@ -69,6 +70,9 @@ if not defined create_source_file set c_options=%c_options%fputs("\nint _create_
 
 if defined create_exe_file set c_options=%c_options%fputs("\nint _create_exe_file=1;",out^);
 if not defined create_exe_file set c_options=%c_options%fputs("\nint _create_exe_file=0;",out^);
+
+if defined run_exe set c_options=%c_options%fputs("\nint _run_exe=1;",out^);
+if not defined run_exe set c_options=%c_options%fputs("\nint _run_exe=0;",out^);
 
 set build_or_run=-run
 if defined create_builder_exe set build_or_run=-o %builder_exe%
@@ -198,7 +202,7 @@ FILE* create_compilation_process(const char* output_exe)
 
 void crash_handler(int sig)
 {
-	printf("!!! crash_handler: %d", sig);
+	printf("!!!! crash_handler: %d", sig);
 	exit(sig > 0 ? sig : 1);
 }
 
@@ -227,9 +231,7 @@ void _start()
 	
 	if (compiler_pipe)
 	{
-		fprintf(stderr, "pclose\n");
 		err = pclose(compiler_pipe);
-		fprintf(stderr, "!!!! %d\n", err);
 		if (err != 0)
 		{
 			fprintf(stderr, "Failed to close compiler pipe. Error code: %d\n", err);
@@ -237,11 +239,19 @@ void _start()
 		}
 	}
 
-	snprintf(buffer, sizeof(buffer), "%s --!compile --!source", _output_exe);
-	printf("---------------------------------------\n");
-	int result = system(buffer);
-	printf("---------------------------------------\n");
-	printf("%s returned %d\n", _output_exe, result);
+	extern int _run_exe;
+	if (_run_exe)
+	{
+		snprintf(buffer, sizeof(buffer), "%s --!compile --!source", _output_exe);
+		printf("---------------------------------------\n");
+		int result = system(buffer);
+		printf("---------------------------------------\n");
+		printf("%s returned %d\n", _output_exe, result);
+	}
+	else if (_verbose)
+	{
+		printf("%s builder successfully ended.\n", _output_exe);
+	}
 
 	exit(0);
 }
@@ -266,22 +276,40 @@ void _start()
 		printf("\"\"\"\n");
 	}
 
-	if (strstr(commandLine, "--compile"))
+	if (strstr(commandLine, "--builder"))
 	{
 		char bat_filename[1024];
 		char* head = bat_filename;
 		int len = 0;
 		int err = sscanf(commandLine, "%s%n", bat_filename, &len);
 		if (err != 1) exit(1);
-		printf("bat_filename:'%s' %d\n", bat_filename, len);
+		printf("exe_filename:'%s' %d\n", bat_filename, len);
 		if (bat_filename[len-1] == '"')
-			sprintf(bat_filename + len - 4, "bat\"");
+			sprintf(bat_filename + len - 5, "_new.bat\"");
 		else
-			sprintf(bat_filename + len - 3, "bat");
+			sprintf(bat_filename + len - 4, "_new.bat");
 
 		printf("bat_filename:'%s' %d\n", bat_filename, len);
-		int system(char*);
-		system(bat_filename);
+		
+		FILE* out = fopen(bat_filename, "w");
+		if (!out)
+		{
+			fprintf(stderr, "Failed to write into '%s'", bat_filename);
+			exit(1);
+		}
+		
+		// FIXME: Doesn't work? No errors, just doesn't produce a file.
+		// Probably a problem with "-characters in the filename.
+		// Should discard "-symbols and only use the filename.
+		extern const char* _source_string;
+		fputs(_source_string, out);
+		fputs("hi!", out);
+		int err = fclose(out);
+		if (err != 0)
+		{
+			fprintf(stderr, "Failed to close file '%s'. Error code: %d", bat_filename, err);
+			exit(1);
+		}
 	}
 
 	printf("The end!\n");
