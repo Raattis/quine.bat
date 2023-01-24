@@ -285,7 +285,11 @@ void _start()
 		if (err != 1) exit(1);
 		printf("exe_filename:'%s' %d\n", bat_filename, len);
 		if (bat_filename[len-1] == '"')
-			sprintf(bat_filename + len - 5, "_new.bat\"");
+		{
+			sprintf(bat_filename + len - 5, "_new.bat");
+			bat_filename[0] = ' ';
+			memcpy(bat_filename, bat_filename + 1, sizeof(bat_filename) - 1);
+		}
 		else
 			sprintf(bat_filename + len - 4, "_new.bat");
 
@@ -303,8 +307,8 @@ void _start()
 		// Should discard "-symbols and only use the filename.
 		extern const char* _source_string;
 		fputs(_source_string, out);
-		fputs("hi!", out);
-		int err = fclose(out);
+		//fputs("hi!", out);
+		err = fclose(out);
 		if (err != 0)
 		{
 			fprintf(stderr, "Failed to close file '%s'. Error code: %d", bat_filename, err);
