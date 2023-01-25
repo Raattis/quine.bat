@@ -1,13 +1,13 @@
 @goto build
-#if 0
 :build
 @echo off
 @rem if exist .\%~n0.exe del .\%~n0.exe
 (
-	echo #line 1 "%~n0%~x0"
 	echo const char* _source_filename = "%~n0%~x0";
-	type %~n0%~x0 | more +1
-) | .\tcc.exe - -DBUILDER -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -bench -run
+	echo #line 0 "%~n0%~x0"
+	echo #if 0
+	type %~n0%~x0
+) | .\tcc.exe - -DBUILDER -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -run
 if ERRORLEVEL 1 exit ERRORLEVEL
 .\%~n0.exe
 @exit ERRORLEVEL
