@@ -29,6 +29,7 @@ set compiler_exe=tcc.exe
 #ifdef BUILDER
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32";
 static const int b_create_c_file = 1;
+static const int b_create_preprocessed_builder = 1;
 static const int b_create_exe_file = 1;
 static const int b_run_after_build = 1;
 static const char* b_run_arguments = "-h";
@@ -43,6 +44,7 @@ static const int b_verbose = 1;
 
 char buffer[1024 * 1024];
 
+//int enable_print = 0;
 int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename)
 {
 	int line_number = 1;
@@ -64,6 +66,7 @@ int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outf
 	if (stop) {
 		int stop_len = stop ? strlen(stop) : 0;
 		while (fgets(buffer, sizeof(buffer), infile)) {
+			//if (enable_print) printf("%s", buffer);
 			if (stop && strncmp(buffer, stop, stop_len) == 0) break;
 			fputs(buffer, outfile);
 		}
@@ -88,7 +91,7 @@ void insert_file_as_string(FILE* infile, FILE* outfile)
 	fputc('"', outfile);
 }
 
-int create_code_file(const char* start, const char* stop, const char* input_filename, const char* output_c, FILE* compiler_pipe)
+int put_source_code(const char* start, const char* stop, const char* input_filename, const char* output_c, FILE* compiler_pipe)
 {
 	FILE *infile = fopen(input_filename, "r");
 	FILE *outfile = compiler_pipe ? compiler_pipe : fopen(output_c, "w");
@@ -97,7 +100,7 @@ int create_code_file(const char* start, const char* stop, const char* input_file
 
 	fseek(infile, 0, SEEK_SET);
 
-	fputs("\nconst char* _source_string = \"\"\n", outfile);
+	fputs("\nconst char* b_source_string = \"\"\n", outfile);
 	insert_file_as_string(infile, outfile);
 	fputc(';', outfile);
 
@@ -107,7 +110,7 @@ int create_code_file(const char* start, const char* stop, const char* input_file
 
 int compile(const char* output_c, const char* output_exe)
 {
-	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments, b_create_exe_file ? "" : "-run");
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments, b_create_exe_file ? "" : "-run");
 	int result = system(buffer);
 	FATAL(result == 0, "Error while compiling '%s'. Error value: %d", output_c, result);
 	return result;
@@ -124,6 +127,17 @@ FILE* create_compilation_process()
 	return 0;
 }
 
+FILE* create_preprocessor_process(const char* input_file)
+{
+	snprintf(buffer, sizeof(buffer), "%s -P %s -E %s", b_compiler_exe_path, input_file, b_compiler_arguments);
+	FILE* compiler_pipe = popen(buffer, "r");
+	if (compiler_pipe)
+		return compiler_pipe;
+
+	FATAL(0, "Couldn't create a preprocessor process with '%s'.", buffer);
+	return 0;
+}
+
 void crash_handler(int sig)
 {
 	FATAL(0, "!!!! crash_handler: %d", sig);
@@ -136,11 +150,51 @@ void _start()
 	if (b_verbose)
 		printf("Running %s builder.\n", b_output_exe_filename);
 
+	if (b_create_preprocessed_builder)
+	{
+		const char* package_filename = "quine_packaged.bat";
+		FILE* out = fopen(package_filename, "w");
+		FILE* infile = fopen(b_source_filename, "r");
+		
+		insert_snippet(0, "#endif // BUILDER", infile, out, 0);
+		
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef SOURCE\n", out);
+			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, out, 0);
+			fputs("#endif // SOURCE\n", out);
+		}
+		
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef PREPROCESSED\n", out);
+			
+			FILE* source_for_preprocessor = fopen("source_for_preprocessor.c", "w");
+			fseek(infile, 0, SEEK_SET);
+			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, source_for_preprocessor, 0);
+			fclose(source_for_preprocessor);
+			
+			if (b_verbose) printf("Creating preprocessor\n");
+			FILE* preprocessor_result = create_preprocessor_process("source_for_preprocessor.c");
+			while (fgets(buffer, sizeof(buffer), preprocessor_result))
+				fputs(buffer, out);
+			fclose(preprocessor_result);
+		
+			fputs("#endif // PREPROCESSED\n", out);
+		}
+		
+		fclose(infile);
+		fclose(out);
+		
+		if (b_verbose) printf("Finished creating a package.");
+		exit(0);
+	}
+
 	FILE* compiler_pipe = b_create_c_file ? 0 : create_compilation_process();
 
 	const char* input_filename = b_source_filename && sizeof(b_source_filename) > 1 ? b_source_filename : 0;
 	const char* output_c = b_output_c_filename && sizeof(b_output_c_filename) > 1 ? b_output_c_filename : 0;
-	create_code_file("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
+	put_source_code("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
 
 	int err = compiler_pipe ? 0 : compile(output_c, b_output_exe_filename);
 	if (err != 0)
@@ -213,8 +267,8 @@ void handle_commandline_arguments()
 	}
 	else if (strstr(commandLine, "--print_source"))
 	{
-		extern const char* _source_string;
-		printf("%s", _source_string);
+		extern const char* b_source_string;
+		printf("%s", b_source_string);
 		void exit(int);
 		exit(0);
 	}
@@ -223,8 +277,8 @@ void handle_commandline_arguments()
 		FILE* out = fopen(bat_filename, "w");
 		FATAL(out, "Failed to get filename from GetCommandLine(): '%s'", commandLine);
 
-		extern const char* _source_string;
-		fputs(_source_string, out);
+		extern const char* b_source_string;
+		fputs(b_source_string, out);
 		int err = fclose(out);
 		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_filename, err);
 		void exit(int);
