@@ -1,105 +1,29 @@
+@goto build
+#if 0
+:build
 @echo off
+@rem if exist .\%~n0.exe del .\%~n0.exe
+(
+	echo #line 1 "%~n0%~x0"
+	echo const char* _source_filename = "%~n0%~x0";
+	type %~n0%~x0 | more +1
+) | .\tcc.exe - -DBUILDER -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -bench -run
+if ERRORLEVEL 1 exit ERRORLEVEL
+.\%~n0.exe
+@exit ERRORLEVEL
+#endif
 
-rem filename=<name_of_this_file>.<ext_of_this_file>
-set filename=%~n0%~x0
-set c_filename=%~n0.c
-set output_exe=%~n0.exe
-set builder_exe=%~n0_builder.exe
-set create_builder_exe=
-set create_source_file=
-set create_exe_file=1
-set run_exe=
-set verbose=1
+#ifdef BUILDER
+const int _variables_set = 0;
+const char* _compiler_bin = ".\\tcc.exe";
+extern const char* _source_filename;
+char* _output_exe;
+char* _output_c;
+int _create_c_file = 1;
+int _create_exe_file = 1;
+int _run_exe = 0;
+int _verbose = 1;
 
-if NOT EXIST %filename% (
-	echo This file is missing?!
-	exit 1
-)
-
-set compiler=tcc
-if EXIST %compiler%.exe (
-	rem nop
-) else if EXIST static-tcc.exe (
-	set compiler=static-tcc
-) else if EXIST tcc.exe (
-	set compiler=tcc
-) else (
-	echo tcc.exe needs to be in the same folder as %filename%.
-	exit 1
-)
-if defined verbose echo Using %compiler%.exe as compiler
-
-set step=Rebuilding Tiny C Compiler
-set tcc_c=tcc.c
-if EXIST %tcc_c% (
-	if defined verbose echo %step%. '%tcc_c%' was found so why not.
-	if EXIST %compiler%.exe ( COPY /Y %compiler%.exe %compiler%-old.exe 1> nul )
-	rem tcc.c -- The compiler file
-	rem -DTCC_TARGET_PE -- Output using Windows' executable format
-	rem -DTCC_TARGET_X86_64 -- Output x64 machine code
-	rem -Iinclude & -Iinclude/winapi -- paths that #include <...> directives can refer to
-	rem -Llib -- Not necessary as we will manually specify each library
-	rem -nostdinc -- Prevent any default include paths being used for compiling.
-	rem -nostdlib -- Prevent any default libraries being used for linking.
-	rem -lmsvcrt -- Excplicitly state that we will use MSVC's C Runtime library
-	rem -lkernel32 & -ltcc1-64 -- Libraries required for common functions
-	rem For this to work libtcc1-64 has to be compiled ahead of time... Maybe I'll get to it later.
-	.\%compiler%-old.exe -o static-tcc.exe ../../tcc.c -DTCC_TARGET_PE -DTCC_TARGET_X86_64 -Iinclude -Iinclude/winapi -nostdinc -lmsvcrt -lkernel32 -ltcc1-64
-	
-	if ERRORLEVEL 1 (
-		COPY /Y %compiler%-old.exe %compiler%.exe 1> nul
-		DEL %compiler%-old.exe
-		goto error
-	)
-)
-
-set step=Creating a bootstrap builder
-
-echo/
-if defined verbose echo %step%
-
-if defined verbose set c_start=fprintf(stderr,"Running bootstrap builder.\n"^);
-
-set c_options=fputs("\nconst char* _source_filename=\"%filename%\";",out^);fputs("\nconst char* _output_c=\"%c_filename%\";",out^);fputs("\nconst char* _output_exe=\"%output_exe%\";",out^);fputs("\nconst char* _compiler_bin=\".\\\\%compiler%.exe\";",out^);
-
-if defined verbose set c_options=%c_options%fputs("\nint _verbose=1;",out^);
-if not defined verbose set c_options=%c_options%fputs("\nint _verbose=0;",out^);
-
-if defined create_source_file set c_options=%c_options%fputs("\nint _create_source_file=1;",out^);
-if not defined create_source_file set c_options=%c_options%fputs("\nint _create_source_file=0;",out^);
-
-if defined create_exe_file set c_options=%c_options%fputs("\nint _create_exe_file=1;",out^);
-if not defined create_exe_file set c_options=%c_options%fputs("\nint _create_exe_file=0;",out^);
-
-if defined run_exe set c_options=%c_options%fputs("\nint _run_exe=1;",out^);
-if not defined run_exe set c_options=%c_options%fputs("\nint _run_exe=0;",out^);
-
-set build_or_run=-run
-if defined create_builder_exe set build_or_run=-o %builder_exe%
-
-rem Running a C script to output text from between builder_start and builder_end markers later in this file into stdout, which is piped to another run of TCC. That run either builds a builder.exe or runs immediately depeding if create_builder_exe is defined. Regardless which mode is used, the builder takes the code between source_start and source_end markers and outputs it into a .c file and then compiles it.
-rem About this code:
-rem '^' is a Batch script escape character. Where it is needed seems to be largely
-rem random. There is no logic here, only trial and error.
-
-echo #include ^^^<stdio.h^^^> #include ^^^<string.h^^^> char b[1024*1024]; void _runmain(^){%c_start%FILE*in=fopen("%filename%","r"^),*out=stdout;char s[]="// builder_start",e[]="// builder_end";int l=1;while(fgets(b,sizeof(b),in^)^){++l;if(strncmp(b, s, sizeof(s^)-1^) == 0^)break;}fprintf(out,"#line %%d \"%filename%\"\n",l^);while(fgets(b,32,in^)^){if(strncmp(b,e,sizeof(e^)-1^)==0^)break;fputs(b,out^);}{%c_options%}fclose(in^);fclose(out^);void exit(int^);exit(0^);} | .\%compiler%.exe -run -nostdlib -lmsvcrt - | .\%compiler%.exe -lmsvcrt -g -bt 8 - %build_or_run%
-
-if ERRORLEVEL 1 goto error
-
-set step=Running %output_exe% builder.
-if defined create_builder_exe .\%builder_exe%
-
-if ERRORLEVEL 1 goto error
-
-if defined verbose echo %filename% finished successfully!
-exit 0
-
-:error
-echo/
-echo %step% failed. Error code: %ERRORLEVEL%
-exit 1
-
-// builder_start
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -206,24 +130,60 @@ void crash_handler(int sig)
 	exit(sig > 0 ? sig : 1);
 }
 
+#include <sys/stat.h>
+#include <windows.h>
+
+char filename_buffer[1024];
+
+void setGlobalVariables()
+{
+	if (_variables_set)
+		return;
+
+	//printf("_source_filename=%s\n", _source_filename);
+
+	struct stat buf;
+	if (stat(_compiler_bin, &buf) < 0)
+	{
+		if (stat(".\\static-tcc.exe", &buf) >= 0)
+			_compiler_bin = ".\\static-tcc.exe";
+		else if (stat(".\\tcc.exe", &buf) >= 0)
+			_compiler_bin = ".\\static-tcc.exe";
+	}
+
+	int filename_size = strlen(_source_filename) + 1;
+	_output_exe = filename_buffer + filename_size;
+	memcpy(_output_exe, _source_filename, filename_size);
+	_output_exe[filename_size - 4] = 'e';
+	_output_exe[filename_size - 3] = 'x';
+	_output_exe[filename_size - 2] = 'e';
+
+	_output_c = filename_buffer + filename_size * 2;
+	memcpy(_output_c, _source_filename, filename_size);
+	_output_c[filename_size - 4] = 'c';
+	_output_c[filename_size - 3] = 0;
+
+	//printf("%s, %s, %s\n", _source_filename, _output_exe, _output_c);
+
+	int _create_exe_file = 1;
+	int _run_exe = 0;
+	int _verbose = 1;
+}
+
 void _start()
-{	
-	extern int _verbose;
-	extern int _create_source_file;
-	extern const char* _output_c;
-	extern const char* _output_exe;
-	extern const char* _source_filename;
+{
+	setGlobalVariables();
 
 	signal(SIGSEGV, crash_handler);
 
 	if (_verbose)
 		printf("Running %s builder.\n", _output_exe);
 
-	FILE* compiler_pipe = _create_source_file ? 0 : create_compilation_process(_output_exe);
+	FILE* compiler_pipe = _create_c_file ? 0 : create_compilation_process(_output_exe);
 
 	const char* input_filename = _source_filename && sizeof(_source_filename) > 1 ? _source_filename : 0;
 	const char* output_c = _output_c && sizeof(_output_c) > 1 ? _output_c : 0;
-	create_code_file("// source_start", "// source_end", input_filename, output_c, compiler_pipe);
+	create_code_file("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
 
 	int err = compiler_pipe ? 0 : compile(output_c, _output_exe);
 	if (err != 0)
@@ -256,9 +216,9 @@ void _start()
 	exit(0);
 }
 void _runmain() { _start(); }
-// builder_end
+#endif // BUILDER
 
-// source_start
+#ifdef SOURCE
 #include <stdio.h>
 #include <windows.h>
 
@@ -320,5 +280,4 @@ void _start()
 	exit(0);
 }
 void _runmain() { _start(); }
-
-// source_end
+#endif // SOURCE
