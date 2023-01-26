@@ -29,7 +29,7 @@ set compiler_exe=tcc.exe
 #ifdef BUILDER
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32";
 static const int b_create_c_file = 1;
-static const int b_create_preprocessed_builder = 1;
+static const int b_create_preprocessed_builder = 0;
 static const int b_create_exe_file = 1;
 static const int b_run_after_build = 1;
 static const char* b_run_arguments = "-h";
@@ -152,6 +152,7 @@ void _start()
 
 	if (b_create_preprocessed_builder)
 	{
+		// TODO: Rename
 		const char* package_filename = "quine_packaged.bat";
 		FILE* out = fopen(package_filename, "w");
 		FILE* infile = fopen(b_source_filename, "r");
