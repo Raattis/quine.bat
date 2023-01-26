@@ -12,6 +12,7 @@ set compiler_exe=tcc.exe
 (
 	echo static const char* b_source_filename = "%~n0%~x0";
 	echo static const char* b_output_exe_filename = "%~n0.exe";
+	echo static const char* b_output_dll_filename = "%~n0.dll";
 	echo static const char* b_output_c_filename = "%~n0.c";
 	echo static const char* b_compiler_exe_path = "%compiler_exe%";
 	echo #define BUILDER
@@ -28,11 +29,11 @@ set compiler_exe=tcc.exe
 
 #ifdef BUILDER
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32";
-static const int b_create_c_file = 1;
+static const int b_create_c_file = 0;
 static const int b_create_preprocessed_builder = 0;
-static const int b_create_exe_file = 1;
-static const int b_run_after_build = 1;
-static const char* b_run_arguments = "-h";
+static const int b_create_exe_file = 0;
+static const int b_run_after_build = 0;
+static const char* b_run_arguments = "-!h --dll";
 static const int b_verbose = 1;
 
 #include <signal.h>
@@ -110,7 +111,7 @@ int put_source_code(const char* start, const char* stop, const char* input_filen
 
 int compile(const char* output_c, const char* output_exe)
 {
-	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments, b_create_exe_file ? "" : "-run");
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments);
 	int result = system(buffer);
 	FATAL(result == 0, "Error while compiling '%s'. Error value: %d", output_c, result);
 	return result;
@@ -118,7 +119,18 @@ int compile(const char* output_c, const char* output_exe)
 
 FILE* create_compilation_process()
 {
-	snprintf(buffer, sizeof(buffer), "%s - -o %s %s %s", b_compiler_exe_path, b_output_exe_filename, b_compiler_arguments, b_create_exe_file ? "" : "-run");
+	snprintf(buffer, sizeof(buffer), "%s - -o %s %s %s", b_compiler_exe_path, b_output_exe_filename, b_compiler_arguments);
+	FILE* compiler_pipe = popen(buffer, "w");
+	if (compiler_pipe)
+		return compiler_pipe;
+
+	FATAL(0, "Couldn't create a compiler process with '%s'.", buffer);
+	return 0;
+}
+
+FILE* create_dll_compilation_process()
+{
+	snprintf(buffer, sizeof(buffer), "%s - -o %s %s -shared", b_compiler_exe_path, b_output_dll_filename, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "w");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -188,19 +200,34 @@ void _start()
 		exit(0);
 	}
 
-	FILE* compiler_pipe = b_create_c_file ? 0 : create_compilation_process();
-
-	const char* input_filename = b_source_filename && sizeof(b_source_filename) > 1 ? b_source_filename : 0;
-	const char* output_c = b_output_c_filename && sizeof(b_output_c_filename) > 1 ? b_output_c_filename : 0;
-	put_source_code("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
-
-	int err = compiler_pipe ? 0 : compile(output_c, b_output_exe_filename);
-	if (err != 0)
-		exit(err);
-
-	if (compiler_pipe)
 	{
-		err = pclose(compiler_pipe);
+		FILE* compiler_pipe = b_create_c_file ? 0 : create_compilation_process();
+
+		const char* input_filename = b_source_filename && sizeof(b_source_filename) > 1 ? b_source_filename : 0;
+		const char* output_c = b_output_c_filename && sizeof(b_output_c_filename) > 1 ? b_output_c_filename : 0;
+		printf("parse_code\n");
+		put_source_code("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
+		printf("end parse_code\n");
+
+		int err = compiler_pipe ? 0 : compile(output_c, b_output_exe_filename);
+		if (err != 0)
+			exit(err);
+
+		if (compiler_pipe)
+		{
+			err = pclose(compiler_pipe);
+			FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
+		}
+	}
+
+	{
+		FILE* infile = fopen(b_source_filename, "r");
+		FILE* compiler_pipe = create_dll_compilation_process();
+		FATAL(compiler_pipe, "Failed to create a compiler_pipe for '%s'.", b_output_dll_filename);
+
+		insert_snippet("#ifdef DLL", "#endif // DLL", infile, compiler_pipe, b_source_filename);
+
+		int err = pclose(compiler_pipe);
 		FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
 	}
 
@@ -228,17 +255,38 @@ void _runmain() { _start(); }
 #ifdef SOURCE
 #include <stdio.h>
 #include <windows.h>
+#include <sys/stat.h>
 
-//#error test error on line 180
+//#error test error on line 257
 
 #define FATAL(x, ...) do { if (x) break; fprintf(stderr, "\n(%s)\n", #x); fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n"); void exit(int); exit(1); } while(0)
+
+int cmp_modified_times(const char* file1, const char* file2)
+{
+	struct stat buf1;
+	stat(file1, &buf1);
+	
+	struct stat buf2;
+	stat(file2, &buf2);
+	
+	if (buf1.st_mtime == buf2.st_mtime)
+		return 0;
+	
+	if (buf1.st_mtime < buf2.st_mtime)
+		return -1;
+	
+	return 1;
+}
+
+char exe_filename[1024];
+char bat_filename[1024];
+char bat_new_filename[1024];
+char dll_filename[1024];
 
 void handle_commandline_arguments()
 {
 	char* commandLine = GetCommandLine();
 
-	char exe_filename[1024];
-	char bat_filename[1024];
 	{
 		int len = 0;
 		int err = sscanf(commandLine, "%s%n", exe_filename, &len);
@@ -255,11 +303,19 @@ void handle_commandline_arguments()
 		while (head > start && *(head - 1) != '\\' && *(head - 1) != '/')
 			--head;
 		len = strlen(head);
-		memcpy(bat_filename, head, len - 4);
 		memcpy(exe_filename, head, len + 1);
-		sprintf(bat_filename + len - 4, "_new.bat");
+		
+		memcpy(dll_filename, exe_filename, len - 3);
+		sprintf(dll_filename + len - 3, "dll");
+		
+		memcpy(bat_filename, exe_filename, len - 3);
+		sprintf(bat_filename + len - 3, "bat");
+		
+		memcpy(bat_new_filename, exe_filename, len - 4);
+		sprintf(bat_new_filename + len - 4, "_new.bat");
+		
 	}
-
+	
 	if (strstr(commandLine, " -h") || strstr(commandLine, "help"))
 	{
 	}
@@ -272,14 +328,56 @@ void handle_commandline_arguments()
 	}
 	else if (strstr(commandLine, "--create_builder"))
 	{
-		FILE* out = fopen(bat_filename, "w");
+		FILE* out = fopen(bat_new_filename, "w");
 		FATAL(out, "Failed to get filename from GetCommandLine(): '%s'", commandLine);
 
 		extern const char* b_source_string;
 		fputs(b_source_string, out);
 		int err = fclose(out);
-		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_filename, err);
+		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_new_filename, err);
 		void exit(int);
+		exit(0);
+	}
+	else if(strstr(commandLine, "--dll"))
+	{
+		int i = 10;
+		const char* func_name = "Test";
+		
+		do {
+			printf("-2\n");
+			
+			if (cmp_modified_times(dll_filename, bat_filename) > 0)
+			{
+				printf("-1\n");
+				int err = system(bat_filename);
+				FATAL(err == 0, "Failed to run %s.", bat_filename);
+			}
+			
+			printf("0\n");
+			
+			HMODULE hModule = LoadLibrary(dll_filename);
+			FATAL(NULL != hModule, "Couldn't load '%s'. Error: 0x%X.", dll_filename, GetLastError());
+			printf("1\n");
+			
+			typedef void (*TestFunc)(int*);
+			TestFunc testFunc = (TestFunc)GetProcAddress(hModule, func_name);
+			FATAL(NULL != testFunc, "Couldn't load '%s' from '%s'.", func_name, dll_filename);
+			
+			printf("2\n");
+			
+			int test = -1;	
+			testFunc(&test);
+			printf(">>>>>> %d\n", test);
+			
+			printf("3\n");
+			
+			FreeLibrary(hModule);
+			
+			Sleep(2000);
+			
+			printf("4\n");
+		} while(--i > 0);
+		
 		exit(0);
 	}
 
@@ -315,3 +413,31 @@ void _start()
 
 void _runmain() { _start(); }
 #endif // SOURCE
+
+///////////////////////////////////////////////////////////////////////////////
+
+#ifdef DLL
+#include <stdio.h>
+#include <windows.h>
+
+//#error test error on line 363
+
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "\n(%s)\n", #x); fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n"); void exit(int); exit(1); } while(0)
+
+//#define DLL_FUNC __stdcall
+#define DLL_FUNC __declspec(dllexport)
+DLL_FUNC void Test(int* val);
+
+DLL_FUNC void Test(int* val)
+{
+	FATAL(val, "");
+	printf("Hello from DLL_FUNC void Test(int* val(%d))! \n", *val);
+	*val = 1234;
+}
+
+void _dllstart()
+{
+	printf("Hello from _dllstart()!\n");
+}
+
+#endif // DLL
