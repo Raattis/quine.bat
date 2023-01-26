@@ -29,7 +29,7 @@ set compiler_exe=tcc.exe
 #ifdef BUILDER
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32";
 static const int b_create_c_file = 1;
-static const int b_create_preprocessed_builder = 0;
+static const int b_create_preprocessed_builder = 1;
 static const int b_create_exe_file = 1;
 static const int b_run_after_build = 1;
 static const char* b_run_arguments = "-h";
@@ -156,25 +156,21 @@ void _start()
 		FILE* out = fopen(package_filename, "w");
 		FILE* infile = fopen(b_source_filename, "r");
 		
-		insert_snippet(0, "#endif // BUILDER", infile, out, 0);
-		fputs("#endif // BUILDER\n", out);
-		
-		{
-			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
-			fputs("#ifdef SOURCE\n", out);
-			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, out, 0);
-			fputs("#endif // SOURCE\n", out);
-		}
+		insert_snippet(0, "#endif // SOURCE", infile, out, 0);
+		fputs("#endif // SOURCE\n", out);
 		
 		{
 			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
 			fputs("#ifdef PREPROCESSED\n", out);
 			
+			// TODO: Delete this temp file
 			FILE* source_for_preprocessor = fopen("source_for_preprocessor.c", "w");
 			fseek(infile, 0, SEEK_SET);
+
 			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, source_for_preprocessor, 0);
+		
 			fclose(source_for_preprocessor);
-			
+		
 			if (b_verbose) printf("Creating preprocessor\n");
 			FILE* preprocessor_result = create_preprocessor_process("source_for_preprocessor.c");
 			while (fgets(buffer, sizeof(buffer), preprocessor_result))
