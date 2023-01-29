@@ -31,8 +31,10 @@ set compiler_exe=tcc.exe
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32";
 static const int b_create_c_file = 0;
 static const int b_create_preprocessed_builder = 0;
-static const int b_create_exe_file = 0;
-static const int b_run_after_build = 0;
+static const int b_compile_dll = 1;
+static const int b_compile_source = 1;
+static const int b_create_exe_file = 1;
+static const int b_run_after_build = 1;
 static const char* b_run_arguments = "-!h --dll";
 static const int b_verbose = 1;
 
@@ -41,9 +43,9 @@ static const int b_verbose = 1;
 #include <stdlib.h>
 #include <string.h>
 
-#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "[builder] %s:%d: FATAL: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
-char buffer[1024 * 1024];
+static char buffer[1024 * 1024];
 
 //int enable_print = 0;
 int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename)
@@ -101,9 +103,10 @@ int put_source_code(const char* start, const char* stop, const char* input_filen
 
 	fseek(infile, 0, SEEK_SET);
 
-	fputs("\nconst char* b_source_string = \"\"\n", outfile);
+	fputs("\nchar b_source_buffer[] = \"\"\n", outfile);
 	insert_file_as_string(infile, outfile);
 	fputc(';', outfile);
+	fputs("\nchar* b_source_string = b_source_buffer;\n", outfile);
 
 	fclose(infile);
 	fclose(outfile);
@@ -119,7 +122,7 @@ int compile(const char* output_c, const char* output_exe)
 
 FILE* create_compilation_process()
 {
-	snprintf(buffer, sizeof(buffer), "%s - -o %s %s %s", b_compiler_exe_path, b_output_exe_filename, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s - -o %s %s", b_compiler_exe_path, b_output_exe_filename, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "w");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -197,17 +200,19 @@ void _start()
 		fclose(out);
 		
 		if (b_verbose) printf("Finished creating a package.");
+		
 		exit(0);
 	}
 
+	if (b_compile_source)
 	{
 		FILE* compiler_pipe = b_create_c_file ? 0 : create_compilation_process();
 
 		const char* input_filename = b_source_filename && sizeof(b_source_filename) > 1 ? b_source_filename : 0;
 		const char* output_c = b_output_c_filename && sizeof(b_output_c_filename) > 1 ? b_output_c_filename : 0;
-		printf("parse_code\n");
+		//printf("parse_code\n");
 		put_source_code("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
-		printf("end parse_code\n");
+		//printf("end parse_code\n");
 
 		int err = compiler_pipe ? 0 : compile(output_c, b_output_exe_filename);
 		if (err != 0)
@@ -220,6 +225,7 @@ void _start()
 		}
 	}
 
+	if (b_compile_dll)
 	{
 		FILE* infile = fopen(b_source_filename, "r");
 		FILE* compiler_pipe = create_dll_compilation_process();
@@ -243,7 +249,7 @@ void _start()
 	}
 
 	if (b_verbose)
-		printf("%s builder successfully finished.\n", b_output_exe_filename);
+		printf("%s builder successfully finished.\n", b_source_filename);
 
 	exit(0);
 }
@@ -259,7 +265,7 @@ void _runmain() { _start(); }
 
 //#error test error on line 257
 
-#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "\n(%s)\n", #x); fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n"); void exit(int); exit(1); } while(0)
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "[source] %s:%d: FATAL: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
 int cmp_modified_times(const char* file1, const char* file2)
 {
@@ -282,6 +288,31 @@ char exe_filename[1024];
 char bat_filename[1024];
 char bat_new_filename[1024];
 char dll_filename[1024];
+static void finished()
+{
+	void exit(int);
+	exit(0);
+}
+
+void* load_func(HMODULE hModule, const char* dll_filename, const char* func_name)
+{
+	void* func = GetProcAddress(hModule, func_name);
+	FATAL(func, "Couldn't load '%s' from '%s'.", func_name, dll_filename);
+	return func;
+}
+
+void replace(const char* string, const char* original, const char* replacement)
+{
+	FATAL(strlen(original) == strlen(replacement), "Non-equal length string replacements not implemented: %d != %d, (%s != %s)", strlen(original), strlen(replacement), original, replacement);
+
+	char* match = strstr(string, original);
+	if (!match)
+		return;
+	
+	int len = strlen(original);
+	for (int i = 0; i < len; ++i)
+		match[i] = replacement[i];
+}
 
 void handle_commandline_arguments()
 {
@@ -313,9 +344,8 @@ void handle_commandline_arguments()
 		
 		memcpy(bat_new_filename, exe_filename, len - 4);
 		sprintf(bat_new_filename + len - 4, "_new.bat");
-		
 	}
-	
+
 	if (strstr(commandLine, " -h") || strstr(commandLine, "help"))
 	{
 	}
@@ -323,8 +353,8 @@ void handle_commandline_arguments()
 	{
 		extern const char* b_source_string;
 		printf("%s", b_source_string);
-		void exit(int);
-		exit(0);
+		
+		finished();
 	}
 	else if (strstr(commandLine, "--create_builder"))
 	{
@@ -335,50 +365,75 @@ void handle_commandline_arguments()
 		fputs(b_source_string, out);
 		int err = fclose(out);
 		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_new_filename, err);
-		void exit(int);
-		exit(0);
+		
+		finished();
 	}
 	else if(strstr(commandLine, "--dll"))
 	{
-		int i = 10;
-		const char* func_name = "Test";
+		void* malloc(size_t);
+		void* state = malloc(1000);
 		
-		do {
-			printf("-2\n");
-			
-			if (cmp_modified_times(dll_filename, bat_filename) > 0)
+		HMODULE hModule = LoadLibrary(dll_filename);
+		FATAL(GetLastError() == 0, "Error loading %s.", dll_filename);
+
+		int i = 1000;
+		while (i-- > 0)
+		{
+			if (cmp_modified_times(dll_filename, bat_filename) < 0)
 			{
-				printf("-1\n");
-				int err = system(bat_filename);
-				FATAL(err == 0, "Failed to run %s.", bat_filename);
+				printf("Recompiling '%s'\n", dll_filename);
+				FreeLibrary(hModule);
+				
+				printf("-4\n");
+				
+				const char prefix[] = ""
+					"\n" "static const char* b_source_filename = \"%s\";"
+					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
+					"\n" "static const char* b_output_dll_filename = \"%s\";"
+					"\n" "static const char* b_output_c_filename = \"NOT_USED.c\";"
+					"\n" "static const char* b_compiler_exe_path = \"tcc.exe\";"
+					"\n" "#define BUILDER"
+					"\n" "#line 0 \"%s\""
+					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
+					"\n";
+
+				extern char* b_source_string;
+
+				replace(b_source_string, "b_compile_source = 1;", "b_compile_source = 0;");
+				replace(b_source_string, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
+				replace(b_source_string, "b_compile_dll = 0;", "b_compile_dll = 1;");
+				replace(b_source_string, "b_verbose = 1;", "b_verbose = 0;");
+				replace(b_source_string, "b_run_after_build = 1;", "b_run_after_build = 0;");
+
+				FILE* compiler_pipe = popen("tcc.exe - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi", "w");
+				fprintf(compiler_pipe, prefix, bat_filename, dll_filename, bat_filename); 
+				fputs(b_source_string, compiler_pipe);
+				
+				int err = pclose(compiler_pipe);
+				FATAL(err == 0, "Failed to recompile %s using included source code.", dll_filename);
+				
+				hModule = LoadLibrary(dll_filename);
+				FATAL(GetLastError() == 0, "Error loading %s.", dll_filename);
 			}
-			
-			printf("0\n");
-			
-			HMODULE hModule = LoadLibrary(dll_filename);
+
 			FATAL(NULL != hModule, "Couldn't load '%s'. Error: 0x%X.", dll_filename, GetLastError());
-			printf("1\n");
-			
-			typedef void (*TestFunc)(int*);
-			TestFunc testFunc = (TestFunc)GetProcAddress(hModule, func_name);
-			FATAL(NULL != testFunc, "Couldn't load '%s' from '%s'.", func_name, dll_filename);
-			
-			printf("2\n");
-			
-			int test = -1;	
-			testFunc(&test);
-			printf(">>>>>> %d\n", test);
-			
-			printf("3\n");
-			
-			FreeLibrary(hModule);
-			
-			Sleep(2000);
-			
-			printf("4\n");
-		} while(--i > 0);
+
+			typedef void (*SetupFunc)(void* state);
+			SetupFunc setup = (SetupFunc)load_func(hModule, dll_filename, "setup");
+
+			typedef int (*UpdateFunc)(void* state, float deltatime);
+			UpdateFunc update = (UpdateFunc)load_func(hModule, dll_filename, "update");
+
+			setup(state);
+			int stop = update(state, 0.016);
+			if (stop != 0)
+				break;
+
+			Sleep(16);
+		}
 		
-		exit(0);
+		FreeLibrary(hModule);
+		finished();
 	}
 
 	{
@@ -401,8 +456,8 @@ void handle_commandline_arguments()
 		printf("\n" "    --print_source\tPrint the source code this program was built with into stdout.");
 		printf("\n" "    --create_builder\tOutputs a '%s_new.bat' file that can build this executable.", bat_filename);
 		printf("\n\n");
-		void exit(int);
-		exit(0);
+		
+		finished();
 	}
 }
 
@@ -420,24 +475,53 @@ void _runmain() { _start(); }
 #include <stdio.h>
 #include <windows.h>
 
-//#error test error on line 363
-
-#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "\n(%s)\n", #x); fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n"); void exit(int); exit(1); } while(0)
-
-//#define DLL_FUNC __stdcall
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "[dll] %s:%d: FATAL: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
+	
 #define DLL_FUNC __declspec(dllexport)
-DLL_FUNC void Test(int* val);
 
-DLL_FUNC void Test(int* val)
+typedef struct
 {
-	FATAL(val, "");
-	printf("Hello from DLL_FUNC void Test(int* val(%d))! \n", *val);
-	*val = 1234;
+	int initialized;
+	float time;
+} State;
+enum { StateInitializedMagicNumber = 12345 };
+
+DLL_FUNC void setup(void* state_ptr)
+{
+	State* state = state_ptr;
+	
+	if (state->initialized == StateInitializedMagicNumber)
+		return;
+
+	printf("Init state.\n");
+	memset(state, 0, sizeof(*state));
+	state->initialized = StateInitializedMagicNumber;
+	state->time = 0.0f;
+}
+
+DLL_FUNC int update(void* state_ptr, float deltatime)
+{
+	State* state = state_ptr;
+	FATAL(state->initialized == StateInitializedMagicNumber, "Calling update with uninitialized state.");
+	
+	state->time += deltatime;
+	printf("dt: %f\n", state->time);
+	return 0;
 }
 
 void _dllstart()
 {
-	printf("Hello from _dllstart()!\n");
+	static int started = 0;
+	if (!started)
+	{
+		printf("Starting dll!\n");
+		started = 1;
+	}
+	else
+	{
+		printf("Stopping dll.\n");
+	}
 }
 
 #endif // DLL
+
