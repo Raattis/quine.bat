@@ -3,7 +3,7 @@ This is a single file "builder", C program and runtime recompilation loop
 * Download and unzip [Tiny C Compiler](http://download.savannah.gnu.org/releases/tinycc/) (Tested with tcc-0.9.27-win64-bin.zip)
 * Save quine.bat at `tcc/quine.bat`
 * Run quine.bat
-* Modify the `#ifdef DLL ... #endif // DLL` section
+* Modify the `#ifdef DLL ... #endif // DLL` section while the program is running
 * See that the changes are being applied at runtime
 
 # Troubleshooting
