@@ -25,10 +25,8 @@ set compiler_exe=tcc.exe
 
 ///////////////////////////////////////////////////////////////////////////////
 
-//#error test error on line 27
-
 #ifdef BUILDER
-static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32";
+static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
 static const int b_create_c_file = 0;
 static const int b_create_preprocessed_builder = 0;
 static const int b_compile_dll = 1;
@@ -43,7 +41,8 @@ static const int b_verbose = 1;
 #include <stdlib.h>
 #include <string.h>
 
-#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "[builder] %s:%d: FATAL: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
+#define SEGMENT_NAME "builder"
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
 static char buffer[1024 * 1024];
 
@@ -94,27 +93,9 @@ void insert_file_as_string(FILE* infile, FILE* outfile)
 	fputc('"', outfile);
 }
 
-int put_source_code(const char* start, const char* stop, const char* input_filename, const char* output_c, FILE* compiler_pipe)
-{
-	FILE *infile = fopen(input_filename, "r");
-	FILE *outfile = compiler_pipe ? compiler_pipe : fopen(output_c, "w");
-
-	insert_snippet(start, stop, infile, outfile, input_filename);
-
-	fseek(infile, 0, SEEK_SET);
-
-	fputs("\nchar b_source_buffer[] = \"\"\n", outfile);
-	insert_file_as_string(infile, outfile);
-	fputc(';', outfile);
-	fputs("\nchar* b_source_string = b_source_buffer;\n", outfile);
-
-	fclose(infile);
-	fclose(outfile);
-}
-
 int compile(const char* output_c, const char* output_exe)
 {
-	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments);
 	int result = system(buffer);
 	FATAL(result == 0, "Error while compiling '%s'. Error value: %d", output_c, result);
 	return result;
@@ -204,23 +185,34 @@ void _start()
 		exit(0);
 	}
 
-	if (b_compile_source)
+	if (b_compile_source || b_create_c_file || b_create_exe_file)
 	{
-		FILE* compiler_pipe = b_create_c_file ? 0 : create_compilation_process();
+		FILE* infile = fopen(b_source_filename, "r");
+		FILE* outfile = b_create_c_file ? fopen(b_output_c_filename, "w") : create_compilation_process();
+		
+		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, outfile, b_source_filename);
+		insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, outfile, b_source_filename);
+		
+		fseek(infile, 0, SEEK_SET);
+		fputs("\nchar b_source_buffer[] = \"\"\n", outfile);
+		insert_file_as_string(infile, outfile);
+		fputc(';', outfile);
+		fputs("\nchar* b_source_string = b_source_buffer;\n", outfile);
 
-		const char* input_filename = b_source_filename && sizeof(b_source_filename) > 1 ? b_source_filename : 0;
-		const char* output_c = b_output_c_filename && sizeof(b_output_c_filename) > 1 ? b_output_c_filename : 0;
-		//printf("parse_code\n");
-		put_source_code("#ifdef SOURCE", "#endif // SOURCE", input_filename, output_c, compiler_pipe);
-		//printf("end parse_code\n");
-
-		int err = compiler_pipe ? 0 : compile(output_c, b_output_exe_filename);
-		if (err != 0)
-			exit(err);
-
-		if (compiler_pipe)
+		if (b_create_c_file)
 		{
-			err = pclose(compiler_pipe);
+			fclose(outfile);
+
+			if (b_create_exe_file)
+			{
+				int err = compile(b_output_c_filename, b_output_exe_filename);
+				if (err != 0)
+					FATAL(0, "Failed to compile created %s.", b_output_c_filename);
+			}
+		}
+		else
+		{
+			int err = pclose(outfile);
 			FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
 		}
 	}
@@ -231,6 +223,7 @@ void _start()
 		FILE* compiler_pipe = create_dll_compilation_process();
 		FATAL(compiler_pipe, "Failed to create a compiler_pipe for '%s'.", b_output_dll_filename);
 
+		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, compiler_pipe, b_source_filename);
 		insert_snippet("#ifdef DLL", "#endif // DLL", infile, compiler_pipe, b_source_filename);
 
 		int err = pclose(compiler_pipe);
@@ -258,14 +251,27 @@ void _runmain() { _start(); }
 
 ///////////////////////////////////////////////////////////////////////////////
 
+#ifdef SHARED_PREFIX
+
+typedef struct
+{
+	int stop;
+	int recompile;
+	unsigned long long buffer_size;
+	char* buffer;
+} Communication;
+
+#endif // SHARED_PREFIX
+
+///////////////////////////////////////////////////////////////////////////////
+
 #ifdef SOURCE
 #include <stdio.h>
 #include <windows.h>
 #include <sys/stat.h>
 
-//#error test error on line 257
-
-#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "[source] %s:%d: FATAL: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
+#define SEGMENT_NAME "source"
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
 int cmp_modified_times(const char* file1, const char* file2)
 {
@@ -371,18 +377,19 @@ void handle_commandline_arguments()
 	else if(strstr(commandLine, "--dll"))
 	{
 		void* malloc(size_t);
-		void* state = malloc(1000);
+		void* user_buffer = malloc(1000);
+		int force_recompile = 0;
 		
 		HMODULE hModule = LoadLibrary(dll_filename);
-		FATAL(GetLastError() == 0, "Error loading %s.", dll_filename);
+		FATAL(hModule, "Error loading %s. Error: %d", dll_filename, GetLastError());
 
-		int i = 1000;
-		while (i-- > 0)
+		while (1)
 		{
-			if (cmp_modified_times(dll_filename, bat_filename) < 0)
+			if (force_recompile || cmp_modified_times(dll_filename, bat_filename) < 0)
 			{
 				printf("Recompiling '%s'\n", dll_filename);
-				FreeLibrary(hModule);
+				if (hModule)
+					FreeLibrary(hModule);
 				
 				printf("-4\n");
 				
@@ -410,26 +417,44 @@ void handle_commandline_arguments()
 				fputs(b_source_string, compiler_pipe);
 				
 				int err = pclose(compiler_pipe);
-				FATAL(err == 0, "Failed to recompile %s using included source code.", dll_filename);
-				
+				if (err != 0)
+				{
+					fprintf(stderr, "Failed to recompile %s using included source code.", dll_filename);
+					Sleep(5000);
+					continue;
+				}
+
 				hModule = LoadLibrary(dll_filename);
-				FATAL(GetLastError() == 0, "Error loading %s.", dll_filename);
+				if (!hModule)
+				{
+					fprintf(stderr, "Error while loading %s. Error: 0x%X\n", dll_filename, GetLastError());
+					Sleep(5000);
+					continue;
+				}
+
+				force_recompile = 0;
 			}
 
-			FATAL(NULL != hModule, "Couldn't load '%s'. Error: 0x%X.", dll_filename, GetLastError());
+			if (!hModule)
+			{
+				fprintf(stderr, "'%s' not loaded. Last error: 0x%X\n.", dll_filename, GetLastError());
+				force_recompile = 1;
+				Sleep(500);
+				continue;
+			}
 
-			typedef void (*SetupFunc)(void* state);
-			SetupFunc setup = (SetupFunc)load_func(hModule, dll_filename, "setup");
-
-			typedef int (*UpdateFunc)(void* state, float deltatime);
+			typedef int (*UpdateFunc)(Communication* communication);
 			UpdateFunc update = (UpdateFunc)load_func(hModule, dll_filename, "update");
 
-			setup(state);
-			int stop = update(state, 0.016);
-			if (stop != 0)
+			Communication communication = {0};
+			communication.buffer = user_buffer;
+			communication.buffer_size = 1000 - sizeof(Communication);
+			update(&communication);
+			if (communication.stop != 0)
 				break;
-
-			Sleep(16);
+			
+			if (communication.recompile != 0)
+				force_recompile = 1;
 		}
 		
 		FreeLibrary(hModule);
@@ -475,41 +500,188 @@ void _runmain() { _start(); }
 #include <stdio.h>
 #include <windows.h>
 
-#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "[dll] %s:%d: FATAL: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
-	
-#define DLL_FUNC __declspec(dllexport)
+#define SEGMENT_NAME "dll"
+#define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
 typedef struct
 {
 	int initialized;
-	float time;
+	unsigned tick;
+	HWND hWnd;
+	int x, y;
+	int window_closed;
 } State;
-enum { StateInitializedMagicNumber = 12345 };
+enum { StateInitializedMagicNumber = 12346 };
 
-DLL_FUNC void setup(void* state_ptr)
+#define WINDOW_CREATION_ENABLED 1
+
+void paint(HWND hWnd, State* state)
 {
-	State* state = state_ptr;
+	PAINTSTRUCT ps;
+	HDC hdc = BeginPaint(hWnd, &ps);
+
+	HDC hdcMem = CreateCompatibleDC(hdc);
+	HBITMAP hbm = CreateCompatibleBitmap(hdc, 1, 1);
+	HGDIOBJ hOld = SelectObject(hdcMem, hbm);
+
+	SetPixel(hdcMem, 0, 0, RGB(255, 0, 0));
 	
+	if (state)
+	{
+		for (int x = state->x - 50; x < state->x + 50; ++x)
+			BitBlt(hdc, x, state->y, 1, 1, hdcMem, 0, 0, SRCCOPY);
+		for (int y = state->y - 50; y < state->y + 50; ++y)
+			BitBlt(hdc, state->x, y, 1, 1, hdcMem, 0, 0, SRCCOPY);
+	}
+
+	SelectObject(hdcMem, hOld);
+	DeleteObject(hbm);
+	DeleteDC(hdcMem);
+
+	EndPaint(hWnd, &ps);
+}
+
+const int MY_STATE_ID = 12345;
+
+LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message)
+	{
+		case WM_CREATE:
+		{
+			if (!SetWindowPos(hWnd, NULL, 2000, 70, 0, 0, SWP_NOSIZE | SWP_NOZORDER))
+				FATAL(0, "Failed to position window. Error: ", GetLastError());
+			
+			CREATESTRUCT *pCreate = (CREATESTRUCT*)lParam;
+			State* state = (State*)pCreate->lpCreateParams;
+			FATAL(state->initialized == StateInitializedMagicNumber, "State not initialized in message loop.");
+			SetLastError(0);
+			if (!SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)state) && GetLastError() != 0)
+				printf("State set failed. Error: %d\n", GetLastError());
+			else
+				printf("State set!!! 0:%d\n", GetLastError());
+			
+			break;
+		}
+		case WM_PAINT:
+		{
+			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+			if (!state)
+				printf("No state.\n");
+			
+			paint(hWnd, state);
+			break;
+		}
+		case WM_DESTROY:
+		{
+			//PostQuitMessage(0);
+			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+			if (state)
+				state->window_closed = 1;
+			// fallthrough
+		}
+		default:
+			return DefWindowProc(hWnd, message, wParam, lParam);
+	}
+	return 0;
+}
+
+void create_window(State* state)
+{
+	WNDCLASSEX wcex;
+	memset(&wcex, 0, sizeof(WNDCLASSEX));
+	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.style = CS_HREDRAW | CS_VREDRAW;
+	wcex.lpfnWndProc = window_message_handler;
+	wcex.hInstance = GetModuleHandle(NULL);
+	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	wcex.lpszClassName = "MyWindowClass";
+	RegisterClassEx(&wcex);
+
+	RECT rc = { 0, 0, 400, 300 };
+	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+
+	state->hWnd = CreateWindow("MyWindowClass", "quine.bat", WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,
+		NULL, NULL, GetModuleHandle(NULL), state);
+	ShowWindow(state->hWnd, SW_SHOW);
+}
+
+int poll_messages(State* state)
+{
+	if (!state->hWnd)
+		return 0;
+
+	MSG msg;
+	while (PeekMessage(&msg, state->hWnd, 0, 0, 0))
+	{
+		if (GetMessage(&msg, state->hWnd, 0, 0))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		else
+		{
+			printf("!GetMessage -> %d\n", (int)msg.wParam);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
+{
+	switch (ul_reason_for_call)
+    {
+        case DLL_PROCESS_ATTACH:
+        case DLL_THREAD_ATTACH:
+        case DLL_THREAD_DETACH:
+        case DLL_PROCESS_DETACH:
+            break;
+    }
+    return TRUE;
+}
+
+
+static void setup(State* state)
+{
 	if (state->initialized == StateInitializedMagicNumber)
 		return;
 
 	printf("Init state.\n");
-	memset(state, 0, sizeof(*state));
+	memset(state, 0, 1000); // HACK: Hardcoded buffer size
 	state->initialized = StateInitializedMagicNumber;
-	state->time = 0.0f;
+	state->tick = 0;
+	state->x = 200;
+	state->y = 150;
+
+	create_window(state);
 }
 
-DLL_FUNC int update(void* state_ptr, float deltatime)
+__declspec(dllexport) void update(Communication* communication)
 {
-	State* state = state_ptr;
-	FATAL(state->initialized == StateInitializedMagicNumber, "Calling update with uninitialized state.");
+	State* state = (State*)communication->buffer;
+	setup(state);
+
+	state->tick += 1;
+	if (state->tick % 10 == 0)
+		printf("update(%5d)\n", state->tick);
+
 	
-	state->time += deltatime;
-	printf("dt: %f\n", state->time);
-	return 0;
+	state->x = 200;
+
+	int poll_messages_result = poll_messages(state);
+	if (poll_messages_result != 0)
+		communication->stop = 1;
+
+	if (state->window_closed)
+		communication->stop = 1;
+
+	Sleep(16);
 }
 
-void _dllstart()
+int _dllstart()
 {
 	static int started = 0;
 	if (!started)
@@ -519,8 +691,10 @@ void _dllstart()
 	}
 	else
 	{
-		printf("Stopping dll.\n");
+		printf("Stopping dll. %d\n", started);
+		started += 1;
 	}
+	return 1;
 }
 
 #endif // DLL
