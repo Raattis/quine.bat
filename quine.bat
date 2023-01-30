@@ -256,7 +256,8 @@ void _runmain() { _start(); }
 typedef struct
 {
 	int stop;
-	int recompile;
+	int request_recompile;
+	int was_recompiled;
 	unsigned long long buffer_size;
 	char* buffer;
 } Communication;
@@ -385,6 +386,7 @@ void handle_commandline_arguments()
 
 		while (1)
 		{
+			int was_recompiled = 0;
 			if (force_recompile || cmp_modified_times(dll_filename, bat_filename) < 0)
 			{
 				printf("Recompiling '%s'\n", dll_filename);
@@ -433,6 +435,7 @@ void handle_commandline_arguments()
 				}
 
 				force_recompile = 0;
+				was_recompiled = 1;
 			}
 
 			if (!hModule)
@@ -447,13 +450,14 @@ void handle_commandline_arguments()
 			UpdateFunc update = (UpdateFunc)load_func(hModule, dll_filename, "update");
 
 			Communication communication = {0};
+			communication.was_recompiled = was_recompiled;
 			communication.buffer = user_buffer;
 			communication.buffer_size = 1000 - sizeof(Communication);
 			update(&communication);
 			if (communication.stop != 0)
 				break;
 			
-			if (communication.recompile != 0)
+			if (communication.request_recompile != 0)
 				force_recompile = 1;
 		}
 		
@@ -510,13 +514,15 @@ typedef struct
 	HWND hWnd;
 	int x, y;
 	int window_closed;
+	unsigned long long old_window_proc;
 } State;
-enum { StateInitializedMagicNumber = 12346 };
+enum { StateInitializedMagicNumber = 12347 };
 
 #define WINDOW_CREATION_ENABLED 1
 
 void paint(HWND hWnd, State* state)
 {
+	printf("paint\n");
 	PAINTSTRUCT ps;
 	HDC hdc = BeginPaint(hWnd, &ps);
 
@@ -539,9 +545,8 @@ void paint(HWND hWnd, State* state)
 	DeleteDC(hdcMem);
 
 	EndPaint(hWnd, &ps);
+	printf("hello!");
 }
-
-const int MY_STATE_ID = 12345;
 
 LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -588,6 +593,10 @@ LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, 
 
 void create_window(State* state)
 {
+	printf("create_window\n");
+
+	state->old_window_proc = (unsigned long long)window_message_handler;
+
 	WNDCLASSEX wcex;
 	memset(&wcex, 0, sizeof(WNDCLASSEX));
 	wcex.cbSize = sizeof(WNDCLASSEX);
@@ -643,11 +652,32 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     return TRUE;
 }
 
+void close_window_immediately(State* state)
+{
+	printf("close_window_immediately\n");
+	if (!CloseWindow(state->hWnd))
+		fprintf(stderr, "Failed to close window. Error: %d\n", GetLastError());
+	
+	poll_messages(state);
+		
+	state->hWnd = NULL;
+}
 
 static void setup(State* state)
 {
+	printf("0x%X == 0x%X\n", state->old_window_proc, (unsigned long long)window_message_handler);
+
 	if (state->initialized == StateInitializedMagicNumber)
+	{
+		if (state->old_window_proc != (unsigned long long)window_message_handler)
+		{
+			if (state->hWnd)
+				close_window_immediately(state);
+			create_window(state);
+		}
+
 		return;
+	}
 
 	printf("Init state.\n");
 	memset(state, 0, 1000); // HACK: Hardcoded buffer size
@@ -668,11 +698,13 @@ __declspec(dllexport) void update(Communication* communication)
 	if (state->tick % 10 == 0)
 		printf("update(%5d)\n", state->tick);
 
-	
-	state->x = 200;
 
-	int poll_messages_result = poll_messages(state);
-	if (poll_messages_result != 0)
+	state->x = 210;
+
+	if (state->hWnd && communication->was_recompiled)
+		RedrawWindow(state->hWnd, NULL, NULL, RDW_INVALIDATE);
+
+	if (poll_messages(state) != 0)
 		communication->stop = 1;
 
 	if (state->window_closed)
@@ -681,11 +713,21 @@ __declspec(dllexport) void update(Communication* communication)
 	Sleep(16);
 }
 
+LONG exception_handler(LPEXCEPTION_POINTERS p)
+{
+	p->
+
+	FATAL(0, "Exception!!!\n");
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int _dllstart()
 {
 	static int started = 0;
 	if (!started)
 	{
+		SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&exception_handler);    
+		
 		printf("Starting dll!\n");
 		started = 1;
 	}
