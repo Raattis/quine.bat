@@ -754,6 +754,7 @@ __declspec(dllexport) void update(Communication* communication)
 	if (state->tick % 50 == 0)
 		printf("update(%5d)\n", state->tick);
 
+	// Modify these, save and note the cross being repainted to a different spot
 	state->x = 200;
 	state->y = 150;
 
