@@ -86,7 +86,7 @@ static const int b_compile_dll = 1;
 static const int b_compile_source = 1;
 static const int b_create_exe_file = 1;
 static const int b_run_after_build = 1;
-static const char* b_run_arguments = "-!h --dll";
+static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
 static const int b_verbose = 1;
 
 #include <signal.h>
@@ -483,7 +483,7 @@ void handle_commandline_arguments()
 		sprintf(bat_new_filename + len - 4, "_new.bat");
 	}
 
-	if (strstr(commandLine, " -h") || strstr(commandLine, "help"))
+	if (strstr(commandLine, " -h") || strstr(commandLine, "--help"))
 	{
 	}
 	else if (strstr(commandLine, "--print_source"))
@@ -653,6 +653,23 @@ LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, 
 	return window_message_handler_impl(hWnd, message, wParam, lParam);
 }
 
+int _dllstart()
+{
+	static int started = 0;
+	if (!started)
+	{
+		
+		printf("Starting dll!\n");
+		started = 1;
+	}
+	else
+	{
+		printf("_dllstart() called: %dth time\n", started + 1);
+		started += 1;
+	}
+	return 1;
+}
+
 typedef struct
 {
 	int initialized;
@@ -751,7 +768,8 @@ void create_window(State* state)
 	RECT rc = { 0, 0, 400, 300 };
 	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
 
-	state->hWnd = CreateWindow("MyWindowClass", "quine.bat", WS_OVERLAPPEDWINDOW,
+	// TODO: No hardcoded name. Get the name of the executable from commandline arguments.
+	state->hWnd = CreateWindow("MyWindowClass", GetCommandLine(), WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,
 		NULL, NULL, GetModuleHandle(NULL), state);
 	ShowWindow(state->hWnd, SW_SHOW);
@@ -795,6 +813,8 @@ static void setup(State* state)
 	state->y = 150;
 
 	create_window(state);
+	
+	printf("\n\nGo to the `update` function at the bottom of this source file and edit the `state->x` and `state->y` variable assignments or something, and see what happens. :)\n\n");
 }
 
 __declspec(dllexport) void update(Communication* communication)
@@ -803,7 +823,7 @@ __declspec(dllexport) void update(Communication* communication)
 	setup(state);
 
 	state->tick += 1;
-	if (state->tick % 50 == 0)
+	if (state->tick % 100 == 0)
 		printf("update(%5d)\n", state->tick);
 
 	// Modify these, save and note the cross being repainted to a different spot
@@ -820,23 +840,6 @@ __declspec(dllexport) void update(Communication* communication)
 		communication->stop = 1;
 
 	Sleep(16);
-}
-
-int _dllstart()
-{
-	static int started = 0;
-	if (!started)
-	{
-		
-		printf("Starting dll!\n");
-		started = 1;
-	}
-	else
-	{
-		printf("_dllstart() called: %dth time\n", started + 1);
-		started += 1;
-	}
-	return 1;
 }
 
 #endif // DLL
