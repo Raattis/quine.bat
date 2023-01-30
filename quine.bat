@@ -31,7 +31,7 @@ set compiler_exe=tcc.exe
 
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
 static const int b_create_c_file = 0;
-static const int b_create_preprocessed_builder = 1;
+static const int b_create_preprocessed_builder = 0;
 static const int b_compile_dll = 1;
 static const int b_compile_source = 1;
 static const int b_create_exe_file = 1;
@@ -188,7 +188,6 @@ void _start()
 
 			if (b_verbose) printf("Creating preprocessor for SOURCE\n");
 			FILE* preprocessor_result = create_preprocessor_process(temp_filename);
-			//remove(temp_filename);
 
 			{
 				// Skip first line as it's the #line directive with the temp_filename
@@ -198,6 +197,7 @@ void _start()
 			while (fgets(buffer, sizeof(buffer), preprocessor_result))
 				fputs(buffer, out);
 			pclose(preprocessor_result);
+			remove(temp_filename);
 
 			fputs("#endif // SOURCE\n", out);
 		}
@@ -216,7 +216,6 @@ void _start()
 
 			if (b_verbose) printf("Creating preprocessor for DLL\n");
 			FILE* preprocessor_result = create_preprocessor_process(temp_filename);
-			//remove(temp_filename);
 
 			{
 				// Skip first line as it's the #line directive with the temp_filename
@@ -226,6 +225,7 @@ void _start()
 			while (fgets(buffer, sizeof(buffer), preprocessor_result))
 				fputs(buffer, out);
 			pclose(preprocessor_result);
+			remove(temp_filename);
 
 			fputs("#endif // DLL\n", out);
 		}
