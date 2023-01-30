@@ -5,6 +5,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef BOOTSTRAP_BUILDER
+
 :bootstrap_builder
 @echo off
 set compiler_exe=tcc.exe
@@ -21,14 +22,16 @@ set compiler_exe=tcc.exe
 	type %~n0%~x0 
 ) | %compiler_exe% - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -bench
 @exit ERRORLEVEL
+
 #endif // BOOTSTRAP_BUILDER
 
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef BUILDER
+
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
 static const int b_create_c_file = 0;
-static const int b_create_preprocessed_builder = 0;
+static const int b_create_preprocessed_builder = 1;
 static const int b_compile_dll = 1;
 static const int b_compile_source = 1;
 static const int b_create_exe_file = 1;
@@ -47,36 +50,42 @@ static const int b_verbose = 1;
 static char buffer[1024 * 1024];
 
 //int enable_print = 0;
-int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename)
+int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename, int* line_number)
 {
-	int line_number = 1;
 	if (start) {
 		int start_len = strlen(start);
 		while (fgets(buffer, sizeof(buffer), infile)) {
+			if (line_number)
+				++*line_number;
 			if (strncmp(buffer, start, start_len) == 0) break;
-			++line_number;
 		}
 	}
 
-	if (input_filename) {
+	if (input_filename && line_number) {
+		++*line_number;
 		if (input_filename[0] == '"')
-			fprintf(outfile, "#line %d %s\n", line_number + 1, input_filename);
+			fprintf(outfile, "#line %d %s\n", *line_number, input_filename);
 		else
-			fprintf(outfile, "#line %d \"%s\"\n", line_number + 1, input_filename);
+			fprintf(outfile, "#line %d \"%s\"\n", *line_number, input_filename);
 	}
 
 	if (stop) {
 		int stop_len = stop ? strlen(stop) : 0;
 		while (fgets(buffer, sizeof(buffer), infile)) {
-			//if (enable_print) printf("%s", buffer);
 			if (stop && strncmp(buffer, stop, stop_len) == 0) break;
 			fputs(buffer, outfile);
+			if (line_number)
+				++*line_number;
 		}
 	}
 	else
 	{
 		while (fgets(buffer, sizeof(buffer), infile))
+		{
+			if (line_number)
+				++*line_number;
 			fputs(buffer, outfile);
+		}
 	}
 }
 
@@ -125,7 +134,7 @@ FILE* create_dll_compilation_process()
 
 FILE* create_preprocessor_process(const char* input_file)
 {
-	snprintf(buffer, sizeof(buffer), "%s -P %s -E %s", b_compiler_exe_path, input_file, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s %s -E %s", b_compiler_exe_path, input_file, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "r");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -148,40 +157,107 @@ void _start()
 
 	if (b_create_preprocessed_builder)
 	{
-		// TODO: Rename
-		const char* package_filename = "quine_packaged.bat";
+		char package_filename[1000] = {0};
+		sprintf(package_filename, "%.*s_preprocessed.bat", strlen(b_source_filename) - 4, b_source_filename);
+
 		FILE* out = fopen(package_filename, "w");
 		FILE* infile = fopen(b_source_filename, "r");
-		
-		insert_snippet(0, "#endif // SOURCE", infile, out, 0);
-		fputs("#endif // SOURCE\n", out);
-		
+
+		insert_snippet(0, "static const int b_create_preprocessed_builder = 1;", infile, out, 0, 0);
+		fputs("static const int b_create_preprocessed_builder = 0;\n", out);
+
+		insert_snippet(0, "#endif // BUILDER", infile, out, 0, 0);
+		fputs("#endif // BUILDER\n", out);
+
+		fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+		fputs("#ifdef SHARED_PREFIX\n", out);
+		fputs("// Contents already included in the preprocessed SOURCE and DLL sections\n", out);
+		fputs("#endif // SHARED_PREFIX\n", out);
+
 		{
 			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
-			fputs("#ifdef PREPROCESSED\n", out);
-			
-			// TODO: Delete this temp file
-			FILE* source_for_preprocessor = fopen("source_for_preprocessor.c", "w");
+			fputs("#ifdef SOURCE\n", out);
+
+			const char temp_filename[] = "temp_source_file_to_preprocess.c";
+			FILE* temp_file = fopen(temp_filename, "w");
 			fseek(infile, 0, SEEK_SET);
 
-			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, source_for_preprocessor, 0);
-		
-			fclose(source_for_preprocessor);
-		
-			if (b_verbose) printf("Creating preprocessor\n");
-			FILE* preprocessor_result = create_preprocessor_process("source_for_preprocessor.c");
+			insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, temp_file, 0, 0);
+			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, temp_file, 0, 0);
+			fclose(temp_file);
+
+			if (b_verbose) printf("Creating preprocessor for SOURCE\n");
+			FILE* preprocessor_result = create_preprocessor_process(temp_filename);
+			//remove(temp_filename);
+
+			{
+				// Skip first line as it's the #line directive with the temp_filename
+				fgets(buffer, sizeof(buffer), preprocessor_result);
+			}
+
 			while (fgets(buffer, sizeof(buffer), preprocessor_result))
 				fputs(buffer, out);
-			fclose(preprocessor_result);
-		
-			fputs("#endif // PREPROCESSED\n", out);
+			pclose(preprocessor_result);
+
+			fputs("#endif // SOURCE\n", out);
 		}
-		
+
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef DLL\n", out);
+
+			const char temp_filename[] = "temp_dll_file_to_preprocess.c";
+			FILE* temp_file = fopen(temp_filename, "w");
+			fseek(infile, 0, SEEK_SET);
+
+			insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, temp_file, 0, 0);
+			insert_snippet("#ifdef DLL", "#endif // DLL", infile, temp_file, 0, 0);
+			fclose(temp_file);
+
+			if (b_verbose) printf("Creating preprocessor for DLL\n");
+			FILE* preprocessor_result = create_preprocessor_process(temp_filename);
+			//remove(temp_filename);
+
+			{
+				// Skip first line as it's the #line directive with the temp_filename
+				fgets(buffer, sizeof(buffer), preprocessor_result);
+			}
+
+			while (fgets(buffer, sizeof(buffer), preprocessor_result))
+				fputs(buffer, out);
+			pclose(preprocessor_result);
+
+			fputs("#endif // DLL\n", out);
+		}
+
+		fseek(infile, 0, SEEK_SET);
+
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef ORIGINAL_SHARED_PREFIX\n", out);
+			
+			insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, out, 0, 0);
+			fputs("\n#endif // ORIGINAL_SHARED_PREFIX\n", out);
+		}
+
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef ORIGINAL_SOURCE\n", out);
+			insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, out, 0, 0);
+			fputs("\n#endif // ORIGINAL_SOURCE\n", out);
+		}
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef ORIGINAL_DLL\n", out);
+			insert_snippet("#ifdef DLL", "#endif // DLL", infile, out, 0, 0);
+			fputs("\n#endif // ORIGINAL_DLL\n", out);
+		}
+
 		fclose(infile);
 		fclose(out);
-		
+
 		if (b_verbose) printf("Finished creating a package.");
-		
+
 		exit(0);
 	}
 
@@ -189,10 +265,11 @@ void _start()
 	{
 		FILE* infile = fopen(b_source_filename, "r");
 		FILE* outfile = b_create_c_file ? fopen(b_output_c_filename, "w") : create_compilation_process();
-		
-		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, outfile, b_source_filename);
-		insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, outfile, b_source_filename);
-		
+
+		int line_number = 0;
+		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, outfile, b_source_filename, &line_number);
+		insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, outfile, b_source_filename, &line_number);
+
 		fseek(infile, 0, SEEK_SET);
 		fputs("\nchar b_source_buffer[] = \"\"\n", outfile);
 		insert_file_as_string(infile, outfile);
@@ -223,8 +300,9 @@ void _start()
 		FILE* compiler_pipe = create_dll_compilation_process();
 		FATAL(compiler_pipe, "Failed to create a compiler_pipe for '%s'.", b_output_dll_filename);
 
-		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, compiler_pipe, b_source_filename);
-		insert_snippet("#ifdef DLL", "#endif // DLL", infile, compiler_pipe, b_source_filename);
+		int line_number = 0;
+		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, compiler_pipe, b_source_filename, &line_number);
+		insert_snippet("#ifdef DLL", "#endif // DLL", infile, compiler_pipe, b_source_filename, &line_number);
 
 		int err = pclose(compiler_pipe);
 		FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
@@ -247,6 +325,7 @@ void _start()
 	exit(0);
 }
 void _runmain() { _start(); }
+
 #endif // BUILDER
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -267,6 +346,7 @@ typedef struct
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef SOURCE
+
 #include <stdio.h>
 #include <windows.h>
 #include <sys/stat.h>
@@ -393,8 +473,6 @@ void handle_commandline_arguments()
 				if (hModule)
 					FreeLibrary(hModule);
 				
-				printf("-4\n");
-				
 				const char prefix[] = ""
 					"\n" "static const char* b_source_filename = \"%s\";"
 					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
@@ -490,22 +568,38 @@ void handle_commandline_arguments()
 	}
 }
 
+LONG exception_handler(LPEXCEPTION_POINTERS p)
+{
+	FATAL(0, "Exception!!!\n");
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
 void _start()
 {
+	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&exception_handler);    
 	handle_commandline_arguments();
 }
 
 void _runmain() { _start(); }
+
 #endif // SOURCE
 
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef DLL
+
 #include <stdio.h>
 #include <windows.h>
 
 #define SEGMENT_NAME "dll"
 #define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
+
+// Have this up here to prevent moving the function address due to resizing other functions when recompiling.
+LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	extern int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+	return window_message_handler_impl(hWnd, message, wParam, lParam);
+}
 
 typedef struct
 {
@@ -522,7 +616,6 @@ enum { StateInitializedMagicNumber = 12347 };
 
 void paint(HWND hWnd, State* state)
 {
-	printf("paint\n");
 	PAINTSTRUCT ps;
 	HDC hdc = BeginPaint(hWnd, &ps);
 
@@ -545,10 +638,9 @@ void paint(HWND hWnd, State* state)
 	DeleteDC(hdcMem);
 
 	EndPaint(hWnd, &ps);
-	printf("hello!");
 }
 
-LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
@@ -563,8 +655,6 @@ LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, 
 			SetLastError(0);
 			if (!SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)state) && GetLastError() != 0)
 				printf("State set failed. Error: %d\n", GetLastError());
-			else
-				printf("State set!!! 0:%d\n", GetLastError());
 			
 			break;
 		}
@@ -593,8 +683,6 @@ LRESULT CALLBACK window_message_handler(HWND hWnd, UINT message, WPARAM wParam, 
 
 void create_window(State* state)
 {
-	printf("create_window\n");
-
 	state->old_window_proc = (unsigned long long)window_message_handler;
 
 	WNDCLASSEX wcex;
@@ -639,43 +727,11 @@ int poll_messages(State* state)
 	return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
-{
-	switch (ul_reason_for_call)
-    {
-        case DLL_PROCESS_ATTACH:
-        case DLL_THREAD_ATTACH:
-        case DLL_THREAD_DETACH:
-        case DLL_PROCESS_DETACH:
-            break;
-    }
-    return TRUE;
-}
-
-void close_window_immediately(State* state)
-{
-	printf("close_window_immediately\n");
-	if (!CloseWindow(state->hWnd))
-		fprintf(stderr, "Failed to close window. Error: %d\n", GetLastError());
-	
-	poll_messages(state);
-		
-	state->hWnd = NULL;
-}
-
 static void setup(State* state)
 {
-	printf("0x%X == 0x%X\n", state->old_window_proc, (unsigned long long)window_message_handler);
-
 	if (state->initialized == StateInitializedMagicNumber)
 	{
-		if (state->old_window_proc != (unsigned long long)window_message_handler)
-		{
-			if (state->hWnd)
-				close_window_immediately(state);
-			create_window(state);
-		}
-
+		FATAL(state->old_window_proc == (unsigned long long)window_message_handler, "Window message handler function address moved. 0x%X == 0x%X\n", state->old_window_proc, (unsigned long long)window_message_handler);
 		return;
 	}
 
@@ -695,11 +751,11 @@ __declspec(dllexport) void update(Communication* communication)
 	setup(state);
 
 	state->tick += 1;
-	if (state->tick % 10 == 0)
+	if (state->tick % 50 == 0)
 		printf("update(%5d)\n", state->tick);
 
-
-	state->x = 210;
+	state->x = 200;
+	state->y = 150;
 
 	if (state->hWnd && communication->was_recompiled)
 		RedrawWindow(state->hWnd, NULL, NULL, RDW_INVALIDATE);
@@ -713,27 +769,18 @@ __declspec(dllexport) void update(Communication* communication)
 	Sleep(16);
 }
 
-LONG exception_handler(LPEXCEPTION_POINTERS p)
-{
-	p->
-
-	FATAL(0, "Exception!!!\n");
-	return EXCEPTION_EXECUTE_HANDLER;
-}
-
 int _dllstart()
 {
 	static int started = 0;
 	if (!started)
 	{
-		SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&exception_handler);    
 		
 		printf("Starting dll!\n");
 		started = 1;
 	}
 	else
 	{
-		printf("Stopping dll. %d\n", started);
+		printf("_dllstart() called: %dth time\n", started + 1);
 		started += 1;
 	}
 	return 1;
