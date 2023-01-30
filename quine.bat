@@ -5,11 +5,61 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef BOOTSTRAP_BUILDER
-
+/*
 :bootstrap_builder
 @echo off
 set compiler_exe=tcc.exe
-@rem if exist .\%~n0.exe del .\%~n0.exe
+set compiler_zip_name=tcc-0.9.27-win64-bin.zip
+set download_tcc=n
+if not exist %compiler_exe% if not exist %compiler_zip_name% set /P download_tcc="Download Tiny C Compiler? Please, try to avoid unnecessary redownloading. [y/n] "
+
+if not exist %compiler_exe% (
+	if not exist %compiler_zip_name% (
+		if %download_tcc% == y (
+			powershell -Command "Invoke-WebRequest http://download.savannah.gnu.org/releases/tinycc/%compiler_zip_name% -OutFile %compiler_zip_name%"
+			if exist %compiler_zip_name% (
+				echo Download complete!
+			) else (
+				echo Failed to download %compiler_zip_name%
+			)
+		)
+
+		if not exist %compiler_zip_name% (
+			echo Download Tiny C Compiler manually and unzip it here.
+			pause
+			exit 1
+		)
+	)
+
+	if not exist tcc (
+		echo Unzipping %compiler_zip_name%
+		powershell Expand-Archive %compiler_zip_name% -DestinationPath .
+
+		if exist %compiler_exe% (
+			echo It seems the %compiler_zip_name% contained the %compiler_exe% directly. Thats cool.
+		) else if not exist tcc (
+			echo Unzipping %compiler_zip_name% did not yield the expected "tcc" folder.
+			echo Move the contents of the archive here manually so that tcc.exe is in the same folder as %~n0%~x0.
+			pause
+			exit 1
+		)
+	)
+
+	if not exist %compiler_exe% (
+		echo Moving files from .\tcc\* to .\*
+		robocopy /NJH /NJS /NS /NC /NFL /NDL /NP /MOVE /E tcc .
+		
+		if not exist %compiler_exe% (
+			echo %compiler_exe% still not found.
+			echo Download Tiny C Compiler manually and unzip it here.
+			pause
+			exit 1
+		)
+	)
+
+	echo Tiny C Compiler Acquired!
+) 
+
 (
 	echo static const char* b_source_filename = "%~n0%~x0";
 	echo static const char* b_output_exe_filename = "%~n0.exe";
@@ -22,7 +72,7 @@ set compiler_exe=tcc.exe
 	type %~n0%~x0 
 ) | %compiler_exe% - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -bench
 @exit ERRORLEVEL
-
+*/
 #endif // BOOTSTRAP_BUILDER
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -30,7 +80,7 @@ set compiler_exe=tcc.exe
 #ifdef BUILDER
 
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
-static const int b_create_c_file = 0;
+static const int b_create_c_file = 1;
 static const int b_create_preprocessed_builder = 0;
 static const int b_compile_dll = 1;
 static const int b_compile_source = 1;
@@ -486,6 +536,8 @@ void handle_commandline_arguments()
 
 				extern char* b_source_string;
 
+				replace(b_source_string, "b_create_c_file = 1;", "b_create_c_file = 0;");
+				replace(b_source_string, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
 				replace(b_source_string, "b_compile_source = 1;", "b_compile_source = 0;");
 				replace(b_source_string, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
 				replace(b_source_string, "b_compile_dll = 0;", "b_compile_dll = 1;");
