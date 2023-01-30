@@ -99,7 +99,6 @@ static const int b_verbose = 1;
 
 static char buffer[1024 * 1024];
 
-//int enable_print = 0;
 int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename, int* line_number)
 {
 	if (start) {
