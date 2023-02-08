@@ -1,9 +1,7 @@
-: ' in sh this is the beginning of a multiline comment, in batch this is a valid label
-@goto batch_bootstrap_builder '
-#!/bin/sh
-if false; then
-*/
-#error Remember to insert "#if 0" into the compiler input pipe or skip the first 7 lines when compiling this file.
+: " In sh this is the beginning of a multiline comment, in batch this is a valid label.
+@goto batch_bootstrap_builder "
+if false; then */
+#error Remember to insert "#if 0" into the compiler input pipe or skip the first 5 lines when compiling this file.
 #endif // GOTO_BOOTSTRAP_BUILDER
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -11,6 +9,10 @@ if false; then
 #ifdef BOOTSTRAP_BUILDER
 /*
 fi # sh_bootstrap_builder
+
+#Did you know that hashbang doesn't have to be on the first line of a file? Wild, right! "
+#!/bin/sh
+
 compiler_executable=gcc
 me=`basename "$0"`
 no_ext=`echo "$me" | cut -d'.' -f1`
@@ -20,7 +22,7 @@ static const char* b_output_exe_filename = \"$no_ext.exe\";
 static const char* b_output_dll_filename = \"$no_ext.dll\";
 static const char* b_output_c_filename = \"$no_ext.c\";
 static const char* b_compiler_executable_path = \"$compiler_executable\";
-#define BUILDER
+#define HELLO_WORLD
 #line 1 \"$me\"
 #if GOTO_BOOTSTRAP_BUILDER /*" | cat - $me | $compiler_executable -x c - -o $builder_executable
 
