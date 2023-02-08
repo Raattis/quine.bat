@@ -10,7 +10,7 @@ if false; then */
 /*
 fi # sh_bootstrap_builder
 
-#Did you know that hashbang doesn't have to be on the first line of a file? Wild, right!
+#Did you know that hashbang doesn't have to be on the first line of a file? Wild, right! "
 #!/bin/sh
 
 compiler_executable=gcc
@@ -116,8 +116,8 @@ if not exist %compiler_executable% (
 
 int main()
 {
-    printf("Hello, World!\n");
-    return 0;
+	printf("Hello, World!\n");
+	return 0;
 }
 
 #endif // HELLO_WORLD
@@ -148,7 +148,7 @@ static char buffer[1024 * 1024];
 
 int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename, int* line_number)
 {
-    FATAL(infile, "Infile is not falid: %s.", input_filename);
+	FATAL(infile, "Infile is not falid: %s.", input_filename);
 	if (start) {
 		int start_len = strlen(start);
 		while (fgets(buffer, sizeof(buffer), infile)) {
@@ -247,7 +247,7 @@ void crash_handler(int sig)
 
 void main()
 {
-    signal(SIGSEGV, crash_handler);
+	signal(SIGSEGV, crash_handler);
 
 	if (b_verbose)
 		printf("Running %s builder.\n", b_output_exe_filename);
@@ -676,7 +676,7 @@ LONG exception_handler(LPEXCEPTION_POINTERS p)
 
 void _start()
 {
-	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&exception_handler);    
+	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&exception_handler);
 	handle_commandline_arguments();
 }
 
