@@ -1,19 +1,43 @@
-@goto bootstrap_builder
-#error Remember to insert "#if 0" into the compiler input pipe or skip the 3 first lines when compiling this file.
+: '
+@goto batch_bootstrap_builder '
+#!/bin/sh
+if false; then
+*/
+#error Remember to insert "#if 0" into the compiler input pipe or skip the 7 first lines when compiling this file.
 #endif // GOTO_BOOTSTRAP_BUILDER
+
 
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef BOOTSTRAP_BUILDER
 /*
-:bootstrap_builder
+fi
+compiler_executable=gcc
+me=`basename "$0"`
+no_ext=`echo "$me" | cut -d'.' -f1`
+echo "static const char* b_source_filename = \"me\";
+static const char* b_output_exe_filename = \"$no_ext.exe\";
+static const char* b_output_dll_filename = \"$no_ext.dll\";
+static const char* b_output_c_filename = \"$no_ext.c\";
+static const char* b_compiler_executable_path = \"$compiler_executable\";
+#define LINUX
+#line 0 \"$me\"
+#if GOTO_BOOTSTRAP_BUILDER /*
+" | cat - $me | $compiler_executable -x c - -o $no_ext.exe
+chmod +x $no_ext.exe
+./$no_ext.exe
+# -run -bench -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi
+exit 0
+
+
+:batch_bootstrap_builder
 @echo off
-set compiler_exe=tcc.exe
+set compiler_executable=tcc.exe
 set compiler_zip_name=tcc-0.9.27-win64-bin.zip
 set download_tcc=n
-if not exist %compiler_exe% if not exist %compiler_zip_name% set /P download_tcc="Download Tiny C Compiler? Please, try to avoid unnecessary redownloading. [y/n] "
+if not exist %compiler_executable% if not exist %compiler_zip_name% set /P download_tcc="Download Tiny C Compiler? Please, try to avoid unnecessary redownloading. [y/n] "
 
-if not exist %compiler_exe% (
+if not exist %compiler_executable% (
 	if not exist %compiler_zip_name% (
 		if %download_tcc% == y (
 			powershell -Command "Invoke-WebRequest http://download.savannah.gnu.org/releases/tinycc/%compiler_zip_name% -OutFile %compiler_zip_name%"
@@ -35,8 +59,8 @@ if not exist %compiler_exe% (
 		echo Unzipping %compiler_zip_name%
 		powershell Expand-Archive %compiler_zip_name% -DestinationPath .
 
-		if exist %compiler_exe% (
-			echo It seems the %compiler_zip_name% contained the %compiler_exe% directly. Thats cool.
+		if exist %compiler_executable% (
+			echo It seems the %compiler_zip_name% contained the %compiler_executable% directly. Thats cool.
 		) else if not exist tcc (
 			echo Unzipping %compiler_zip_name% did not yield the expected "tcc" folder.
 			echo Move the contents of the archive here manually so that tcc.exe is in the same folder as %~n0%~x0.
@@ -45,12 +69,12 @@ if not exist %compiler_exe% (
 		)
 	)
 
-	if not exist %compiler_exe% (
+	if not exist %compiler_executable% (
 		echo Moving files from .\tcc\* to .\*
 		robocopy /NJH /NJS /NS /NC /NFL /NDL /NP /MOVE /E tcc .
 		
-		if not exist %compiler_exe% (
-			echo %compiler_exe% still not found.
+		if not exist %compiler_executable% (
+			echo %compiler_executable% still not found.
 			echo Download Tiny C Compiler manually and unzip it here.
 			pause
 			exit 1
@@ -65,15 +89,29 @@ if not exist %compiler_exe% (
 	echo static const char* b_output_exe_filename = "%~n0.exe";
 	echo static const char* b_output_dll_filename = "%~n0.dll";
 	echo static const char* b_output_c_filename = "%~n0.c";
-	echo static const char* b_compiler_exe_path = "%compiler_exe%";
+	echo static const char* b_compiler_executable_path = "%compiler_executable%";
 	echo #define BUILDER
 	echo #line 0 "%~n0%~x0"
 	echo #if GOTO_BOOTSTRAP_BUILDER
 	type %~n0%~x0 
-) | %compiler_exe% - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -bench
+) | %compiler_executable% - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi -bench
 @exit ERRORLEVEL
 */
 #endif // BOOTSTRAP_BUILDER
+
+///////////////////////////////////////////////////////////////////////////////
+
+#ifdef LINUX
+
+#include <stdio.h>
+
+int main()
+{
+    printf("Hello, World!\n");
+    return 0;
+}
+
+#endif // LINUX
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -153,7 +191,7 @@ void insert_file_as_string(FILE* infile, FILE* outfile)
 
 int compile(const char* output_c, const char* output_exe)
 {
-	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s", b_compiler_exe_path, output_c, output_exe, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s %s -o %s %s", b_compiler_executable_path, output_c, output_exe, b_compiler_arguments);
 	int result = system(buffer);
 	FATAL(result == 0, "Error while compiling '%s'. Error value: %d", output_c, result);
 	return result;
@@ -161,7 +199,7 @@ int compile(const char* output_c, const char* output_exe)
 
 FILE* create_compilation_process()
 {
-	snprintf(buffer, sizeof(buffer), "%s - -o %s %s", b_compiler_exe_path, b_output_exe_filename, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s - -o %s %s", b_compiler_executable_path, b_output_exe_filename, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "w");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -172,7 +210,7 @@ FILE* create_compilation_process()
 
 FILE* create_dll_compilation_process()
 {
-	snprintf(buffer, sizeof(buffer), "%s - -o %s %s -shared", b_compiler_exe_path, b_output_dll_filename, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s - -o %s %s -shared", b_compiler_executable_path, b_output_dll_filename, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "w");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -183,7 +221,7 @@ FILE* create_dll_compilation_process()
 
 FILE* create_preprocessor_process(const char* input_file)
 {
-	snprintf(buffer, sizeof(buffer), "%s %s -E %s", b_compiler_exe_path, input_file, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s %s -E %s", b_compiler_executable_path, input_file, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "r");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -527,7 +565,7 @@ void handle_commandline_arguments()
 					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
 					"\n" "static const char* b_output_dll_filename = \"%s\";"
 					"\n" "static const char* b_output_c_filename = \"NOT_USED.c\";"
-					"\n" "static const char* b_compiler_exe_path = \"tcc.exe\";"
+					"\n" "static const char* b_compiler_executable_path = \"tcc.exe\";"
 					"\n" "#define BUILDER"
 					"\n" "#line 0 \"%s\""
 					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
