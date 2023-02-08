@@ -11,22 +11,30 @@ if false; then
 
 #ifdef BOOTSTRAP_BUILDER
 /*
-fi
+fi # sh_bootstrap_builder
 compiler_executable=gcc
 me=`basename "$0"`
 no_ext=`echo "$me" | cut -d'.' -f1`
-echo "static const char* b_source_filename = \"me\";
+builder_executable="${no_ext}_builder.exe"
+echo "static const char* b_source_filename = \"$me\";
 static const char* b_output_exe_filename = \"$no_ext.exe\";
 static const char* b_output_dll_filename = \"$no_ext.dll\";
 static const char* b_output_c_filename = \"$no_ext.c\";
 static const char* b_compiler_executable_path = \"$compiler_executable\";
-#define HELLO_WORLD
-#line 0 \"$me\"
-#if GOTO_BOOTSTRAP_BUILDER /*
-" | cat - $me | $compiler_executable -x c - -o $no_ext.exe
-chmod +x $no_ext.exe
-./$no_ext.exe
-# -run -bench -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi
+#define BUILDER
+#line 1 \"$me\"
+#if GOTO_BOOTSTRAP_BUILDER /*" | cat - $me | $compiler_executable -x c - -o $builder_executable
+
+compiler_exit_status=$?
+if test $compiler_exit_status -ne 0; then echo "Failed to compile $me. Exit code: $compiler_exit_status"; exit $compiler_exit_status; fi
+
+chmod +x $builder_executable
+./$builder_executable
+
+execution_exit_status=$?
+if test $execution_exit_status -ne 0; then echo "$builder_executable exited with status $execution_exit_status"; exit $execution_exit_status; fi
+
+# -run -bench -nostdlib -lmsvcrt(?) -nostdinc -Iinclude
 exit 0
 
 
@@ -118,10 +126,10 @@ int main()
 #ifdef BUILDER
 
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
-static const int b_create_c_file = 1;
+static const int b_create_c_file = 0;
 static const int b_create_preprocessed_builder = 0;
 static const int b_compile_dll = 1;
-static const int b_compile_source = 1;
+static const int b_compile_source = 0;
 static const int b_create_exe_file = 1;
 static const int b_run_after_build = 1;
 static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
@@ -139,6 +147,7 @@ static char buffer[1024 * 1024];
 
 int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename, int* line_number)
 {
+    FATAL(infile, "Infile is not falid: %s.", input_filename);
 	if (start) {
 		int start_len = strlen(start);
 		while (fgets(buffer, sizeof(buffer), infile)) {
@@ -199,7 +208,7 @@ int compile(const char* output_c, const char* output_exe)
 
 FILE* create_compilation_process()
 {
-	snprintf(buffer, sizeof(buffer), "%s - -o %s %s", b_compiler_executable_path, b_output_exe_filename, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s -x c - -o %s %s", b_compiler_executable_path, b_output_exe_filename, b_compiler_arguments);
 	FILE* compiler_pipe = popen(buffer, "w");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -235,9 +244,9 @@ void crash_handler(int sig)
 	FATAL(0, "!!!! crash_handler: %d", sig);
 }
 
-void _start()
+void main()
 {
-	signal(SIGSEGV, crash_handler);
+    signal(SIGSEGV, crash_handler);
 
 	if (b_verbose)
 		printf("Running %s builder.\n", b_output_exe_filename);
@@ -245,7 +254,7 @@ void _start()
 	if (b_create_preprocessed_builder)
 	{
 		char package_filename[1000] = {0};
-		sprintf(package_filename, "%.*s_preprocessed.bat", strlen(b_source_filename) - 4, b_source_filename);
+		sprintf(package_filename, "%.*s_preprocessed.bat", (int)(strlen(b_source_filename) - 4), b_source_filename);
 
 		FILE* out = fopen(package_filename, "w");
 		FILE* infile = fopen(b_source_filename, "r");
@@ -355,6 +364,7 @@ void _start()
 
 		int line_number = 0;
 		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, outfile, b_source_filename, &line_number);
+
 		insert_snippet("#ifdef SOURCE", "#endif // SOURCE", infile, outfile, b_source_filename, &line_number);
 
 		fseek(infile, 0, SEEK_SET);
@@ -411,8 +421,8 @@ void _start()
 
 	exit(0);
 }
-void _runmain() { _start(); }
-
+void _runmain() { main(); }
+//void _start() { main(); }
 #endif // BUILDER
 
 ///////////////////////////////////////////////////////////////////////////////
