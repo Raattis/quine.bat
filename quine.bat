@@ -20,7 +20,7 @@ static const char* b_output_exe_filename = \"$no_ext.exe\";
 static const char* b_output_dll_filename = \"$no_ext.dll\";
 static const char* b_output_c_filename = \"$no_ext.c\";
 static const char* b_compiler_executable_path = \"$compiler_executable\";
-#define LINUX
+#define HELLO_WORLD
 #line 0 \"$me\"
 #if GOTO_BOOTSTRAP_BUILDER /*
 " | cat - $me | $compiler_executable -x c - -o $no_ext.exe
@@ -101,7 +101,7 @@ if not exist %compiler_executable% (
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifdef LINUX
+#ifdef HELLO_WORLD
 
 #include <stdio.h>
 
@@ -111,7 +111,7 @@ int main()
     return 0;
 }
 
-#endif // LINUX
+#endif // HELLO_WORLD
 
 ///////////////////////////////////////////////////////////////////////////////
 
