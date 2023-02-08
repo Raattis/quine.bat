@@ -1,11 +1,10 @@
-: '
+: ' in sh this is the beginning of a multiline comment, in batch this is a valid label
 @goto batch_bootstrap_builder '
 #!/bin/sh
 if false; then
 */
 #error Remember to insert "#if 0" into the compiler input pipe or skip the first 7 lines when compiling this file.
 #endif // GOTO_BOOTSTRAP_BUILDER
-
 
 ///////////////////////////////////////////////////////////////////////////////
 
