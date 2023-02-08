@@ -3,7 +3,7 @@
 #!/bin/sh
 if false; then
 */
-#error Remember to insert "#if 0" into the compiler input pipe or skip the 7 first lines when compiling this file.
+#error Remember to insert "#if 0" into the compiler input pipe or skip the first 7 lines when compiling this file.
 #endif // GOTO_BOOTSTRAP_BUILDER
 
 
