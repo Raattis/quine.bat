@@ -81,7 +81,7 @@ if not exist %compiler_executable% (
 	if not exist %compiler_executable% (
 		echo Moving files from .\tcc\* to .\*
 		robocopy /NJH /NJS /NS /NC /NFL /NDL /NP /MOVE /E tcc .
-		
+
 		if not exist %compiler_executable% (
 			echo %compiler_executable% still not found.
 			echo Download Tiny C Compiler manually and unzip it here.
@@ -332,7 +332,7 @@ void main()
 		{
 			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
 			fputs("#ifdef ORIGINAL_SHARED_PREFIX\n", out);
-			
+
 			insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, out, 0, 0);
 			fputs("\n#endif // ORIGINAL_SHARED_PREFIX\n", out);
 		}
@@ -456,16 +456,16 @@ int cmp_modified_times(const char* file1, const char* file2)
 {
 	struct stat buf1;
 	stat(file1, &buf1);
-	
+
 	struct stat buf2;
 	stat(file2, &buf2);
-	
+
 	if (buf1.st_mtime == buf2.st_mtime)
 		return 0;
-	
+
 	if (buf1.st_mtime < buf2.st_mtime)
 		return -1;
-	
+
 	return 1;
 }
 
@@ -493,7 +493,7 @@ void replace(const char* string, const char* original, const char* replacement)
 	char* match = strstr(string, original);
 	if (!match)
 		return;
-	
+
 	int len = strlen(original);
 	for (int i = 0; i < len; ++i)
 		match[i] = replacement[i];
@@ -520,13 +520,13 @@ void handle_commandline_arguments()
 			--head;
 		len = strlen(head);
 		memcpy(exe_filename, head, len + 1);
-		
+
 		memcpy(dll_filename, exe_filename, len - 3);
 		sprintf(dll_filename + len - 3, "dll");
-		
+
 		memcpy(bat_filename, exe_filename, len - 3);
 		sprintf(bat_filename + len - 3, "bat");
-		
+
 		memcpy(bat_new_filename, exe_filename, len - 4);
 		sprintf(bat_new_filename + len - 4, "_new.bat");
 	}
@@ -538,7 +538,7 @@ void handle_commandline_arguments()
 	{
 		extern const char* b_source_string;
 		printf("%s", b_source_string);
-		
+
 		finished();
 	}
 	else if (strstr(commandLine, "--create_builder"))
@@ -550,7 +550,7 @@ void handle_commandline_arguments()
 		fputs(b_source_string, out);
 		int err = fclose(out);
 		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_new_filename, err);
-		
+
 		finished();
 	}
 	else if(strstr(commandLine, "--dll"))
@@ -558,7 +558,7 @@ void handle_commandline_arguments()
 		void* malloc(size_t);
 		void* user_buffer = malloc(1000);
 		int force_recompile = 0;
-		
+
 		HMODULE hModule = LoadLibrary(dll_filename);
 		FATAL(hModule, "Error loading %s. Error: %d", dll_filename, GetLastError());
 
@@ -570,7 +570,7 @@ void handle_commandline_arguments()
 				printf("Recompiling '%s'\n", dll_filename);
 				if (hModule)
 					FreeLibrary(hModule);
-				
+
 				const char prefix[] = ""
 					"\n" "static const char* b_source_filename = \"%s\";"
 					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
@@ -595,7 +595,7 @@ void handle_commandline_arguments()
 				FILE* compiler_pipe = popen("tcc.exe - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi", "w");
 				fprintf(compiler_pipe, prefix, bat_filename, dll_filename, bat_filename); 
 				fputs(b_source_string, compiler_pipe);
-				
+
 				int err = pclose(compiler_pipe);
 				if (err != 0)
 				{
@@ -630,15 +630,15 @@ void handle_commandline_arguments()
 			Communication communication = {0};
 			communication.was_recompiled = was_recompiled;
 			communication.buffer = user_buffer;
-			communication.buffer_size = 1000 - sizeof(Communication);
+			communication.buffer_size = 1000;
 			update(&communication);
 			if (communication.stop != 0)
 				break;
-			
+
 			if (communication.request_recompile != 0)
 				force_recompile = 1;
 		}
-		
+
 		FreeLibrary(hModule);
 		finished();
 	}
@@ -663,7 +663,7 @@ void handle_commandline_arguments()
 		printf("\n" "    --print_source\tPrint the source code this program was built with into stdout.");
 		printf("\n" "    --create_builder\tOutputs a '%s_new.bat' file that can build this executable.", bat_filename);
 		printf("\n\n");
-		
+
 		finished();
 	}
 }
@@ -706,7 +706,7 @@ int _dllstart()
 	static int started = 0;
 	if (!started)
 	{
-		
+
 		printf("Starting dll!\n");
 		started = 1;
 	}
@@ -741,7 +741,7 @@ void paint(HWND hWnd, State* state)
 	HGDIOBJ hOld = SelectObject(hdcMem, hbm);
 
 	SetPixel(hdcMem, 0, 0, RGB(255, 0, 0));
-	
+
 	if (state)
 	{
 		for (int x = state->x - 50; x < state->x + 50; ++x)
@@ -765,14 +765,14 @@ int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 		{
 			if (!SetWindowPos(hWnd, NULL, 2000, 70, 0, 0, SWP_NOSIZE | SWP_NOZORDER))
 				FATAL(0, "Failed to position window. Error: ", GetLastError());
-			
+
 			CREATESTRUCT *pCreate = (CREATESTRUCT*)lParam;
 			State* state = (State*)pCreate->lpCreateParams;
 			FATAL(state->initialized == StateInitializedMagicNumber, "State not initialized in message loop.");
 			SetLastError(0);
 			if (!SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)state) && GetLastError() != 0)
 				printf("State set failed. Error: %d\n", GetLastError());
-			
+
 			break;
 		}
 		case WM_PAINT:
@@ -781,7 +781,7 @@ int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
 			if (!state)
 				printf("No state.\n");
-			
+
 			paint(hWnd, state);
 			break;
 		}
@@ -1019,21 +1019,23 @@ static void setup(State* state)
 	}
 
 	printf("Init state.\n");
-	memset(state, 0, 1000); // HACK: Hardcoded buffer size
+	memset(state, 0, sizeof(*state));
 	state->initialized = StateInitializedMagicNumber;
 	state->tick = 0;
 	state->x = 200;
 	state->y = 150;
 
 	create_window(state);
-	
+
 	take_screenshot(state->hWnd);
-	
+
 	printf("\n\nGo to the `update` function at the bottom of this source file and edit the `state->x` and `state->y` variable assignments or something, and see what happens. :)\n\n");
 }
 
 __declspec(dllexport) void update(Communication* communication)
 {
+	FATAL(sizeof(State) <= communication->buffer_size, "State is larger than the buffer. %lld <= %lld", sizeof(State), communication->buffer_size);
+
 	State* state = (State*)communication->buffer;
 	setup(state);
 
