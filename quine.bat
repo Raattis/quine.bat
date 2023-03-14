@@ -499,6 +499,58 @@ void replace(const char* string, const char* original, const char* replacement)
 		match[i] = replacement[i];
 }
 
+size_t scan_includes(char* source_file, char** files_to_watch, size_t files_to_watch_count, size_t written)
+{
+	if (written == 0 && files_to_watch[0] == 0)
+		printf("Watching '%s' for changes.\n", source_file);
+
+	files_to_watch[written] = source_file;
+	written += 1;
+
+	char buffer[1024] = {0};
+
+	FILE* infile = fopen(source_file, "r");
+	while (fgets(buffer, sizeof(buffer), infile))
+	{
+		if (strstr(buffer, "#include \"") == 0)
+			continue;
+
+		char* begin = buffer + strlen("#include \"");
+		char* end = begin;
+		while(end < buffer + files_to_watch_count && *end != '"' && *end != 0)
+			end += 1;
+
+		int found = 0;
+		for (size_t i = 0; i < written; i++)
+		{
+			if (strncmp(files_to_watch[i], begin, end - begin) == 0)
+			{
+				found = 1;
+				break;
+			}
+		}
+
+		if (found)
+			continue;
+
+		char* include_file = files_to_watch[written];
+		if (include_file == 0 || strncmp(include_file, begin, end - begin) != 0)
+		{
+			if (include_file != 0)
+				free(include_file);
+
+			include_file = (char*)malloc(end - begin);
+			strncpy(include_file, begin, end - begin);
+			include_file[end - begin] = 0;
+
+			printf("Watching '%s' for changes.\n", include_file);
+		}
+		written = scan_includes(include_file, files_to_watch, files_to_watch_count, written);
+	}
+
+	return written;
+}
+
 void handle_commandline_arguments()
 {
 	char* commandLine = GetCommandLine();
@@ -562,10 +614,25 @@ void handle_commandline_arguments()
 		HMODULE hModule = LoadLibrary(dll_filename);
 		FATAL(hModule, "Error loading %s. Error: %d", dll_filename, GetLastError());
 
+		char* files_to_watch[256] = {0};
+		size_t files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
+
 		while (1)
 		{
 			int was_recompiled = 0;
-			if (force_recompile || cmp_modified_times(dll_filename, bat_filename) < 0)
+
+			int any_file_modified = 0;
+			for (size_t i = 0; i < files_to_watch_count; ++i)
+			{
+				if (cmp_modified_times(dll_filename, files_to_watch[i]) < 0)
+				{
+					printf("Timestamp of '%s' was newer than '%s'\n", files_to_watch[i], dll_filename);
+					any_file_modified = 1;
+					break;
+				}
+			}
+
+			if (force_recompile || any_file_modified)
 			{
 				printf("Recompiling '%s'\n", dll_filename);
 				if (hModule)
@@ -611,6 +678,8 @@ void handle_commandline_arguments()
 					Sleep(5000);
 					continue;
 				}
+
+				files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
 
 				force_recompile = 0;
 				was_recompiled = 1;
