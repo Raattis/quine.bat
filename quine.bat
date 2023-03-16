@@ -666,7 +666,7 @@ void handle_commandline_arguments()
 				int err = pclose(compiler_pipe);
 				if (err != 0)
 				{
-					fprintf(stderr, "Failed to recompile %s using included source code.", dll_filename);
+					fprintf(stderr, "Failed to recompile %s using included source code.\n", dll_filename);
 					Sleep(5000);
 					continue;
 				}
@@ -785,104 +785,6 @@ int _dllstart()
 		started += 1;
 	}
 	return 1;
-}
-
-typedef struct
-{
-	int initialized;
-	unsigned tick;
-	HWND hWnd;
-	int x, y;
-	int window_closed;
-	unsigned long long old_window_proc;
-} State;
-enum { StateInitializedMagicNumber = 12347 };
-
-#define WINDOW_CREATION_ENABLED 1
-
-void paint(HWND hWnd, State* state)
-{
-	PAINTSTRUCT ps;
-	HDC hdc = BeginPaint(hWnd, &ps);
-
-	HDC hdcMem = CreateCompatibleDC(hdc);
-	HBITMAP hbm = CreateCompatibleBitmap(hdc, 1, 1);
-	HGDIOBJ hOld = SelectObject(hdcMem, hbm);
-
-	SetPixel(hdcMem, 0, 0, RGB(255, 0, 0));
-
-	if (state)
-	{
-		for (int x = state->x - 50; x < state->x + 50; ++x)
-			BitBlt(hdc, x, state->y, 1, 1, hdcMem, 0, 0, SRCCOPY);
-		for (int y = state->y - 50; y < state->y + 50; ++y)
-			BitBlt(hdc, state->x, y, 1, 1, hdcMem, 0, 0, SRCCOPY);
-	}
-
-	SelectObject(hdcMem, hOld);
-	DeleteObject(hbm);
-	DeleteDC(hdcMem);
-
-	EndPaint(hWnd, &ps);
-}
-
-int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-	switch (message)
-	{
-		case WM_CREATE:
-		{
-			if (!SetWindowPos(hWnd, NULL, 2000, 70, 0, 0, SWP_NOSIZE | SWP_NOZORDER))
-				FATAL(0, "Failed to position window. Error: ", GetLastError());
-
-			CREATESTRUCT *pCreate = (CREATESTRUCT*)lParam;
-			State* state = (State*)pCreate->lpCreateParams;
-			FATAL(state->initialized == StateInitializedMagicNumber, "State not initialized in message loop.");
-			SetLastError(0);
-			if (!SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)state) && GetLastError() != 0)
-				printf("State set failed. Error: %d\n", GetLastError());
-
-			break;
-		}
-		case WM_PAINT:
-		{
-			printf("WM_PAINT");
-			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
-			if (!state)
-				printf("No state.\n");
-
-			paint(hWnd, state);
-			break;
-		}
-		case WM_KEYDOWN:
-		{
-			WORD keyFlags = HIWORD(lParam);
-			WORD repeatCount = LOWORD(lParam);
-			if ((keyFlags & KF_REPEAT) != KF_REPEAT)
-			{
-				printf("*click* *whrrrrrrrr*\n");
-				extern int take_screenshot(HWND);
-				take_screenshot(hWnd);
-			}
-			else
-			{
-				printf("Key repeat. Repeat count since last handled message: %d\n", LOWORD(lParam));
-			}
-			return DefWindowProc(hWnd, message, wParam, lParam);
-		}
-		case WM_DESTROY:
-		{
-			//PostQuitMessage(0);
-			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
-			if (state)
-				state->window_closed = 1;
-			// fallthrough
-		}
-		default:
-			printf("%x\n", message);
-			return DefWindowProc(hWnd, message, wParam, lParam);
-	}
-	return 0;
 }
 
 int take_screenshot(HWND hWnd)
@@ -1032,6 +934,152 @@ done:
 	return 0;
 }
 
+typedef struct
+{
+	int initialized;
+	unsigned tick;
+	HWND hWnd;
+	int x, y;
+	int window_closed;
+	unsigned long long old_window_proc;
+} State;
+enum { StateInitializedMagicNumber = 12345 };
+
+typedef struct
+{
+	PAINTSTRUCT ps;
+	HDC hdc;
+} Drawer;
+
+Drawer make_drawer(HWND hWnd)
+{
+	Drawer drawer;
+	drawer.hdc = BeginPaint(hWnd, &drawer.ps);
+	return drawer;
+}
+
+void free_drawer(HWND hWnd, Drawer drawer)
+{
+	EndPaint(hWnd, &drawer.ps);
+}
+
+void pixel(Drawer drawer, int x, int y, int r, int g, int b)
+{
+	int success = SetPixel(drawer.hdc, x, y, RGB(r, g, b));
+	if (success < 0)
+		fprintf(stderr, "Failed to set pixel to color. (%d, %d) -> (%d,%d,%d)", x,y, r,g,b);
+}
+
+void rect(Drawer drawer, int x, int y, int w, int h, int r, int g, int b)
+{
+	RECT rect = {x, y, x+w, y+h};
+	HBRUSH brush = CreateSolidBrush(RGB(r,g,b));
+	int success = FillRect(drawer.hdc, &rect, brush);
+	if (success < 0)
+		fprintf(stderr, "Failed to draw a rectangle. (%d, %d, %d, %d)", x,y, w,h);
+	DeleteObject(brush);
+}
+
+void fill(Drawer drawer, int r, int g, int b)
+{
+	int w = GetDeviceCaps(drawer.hdc, HORZRES);
+	int h = GetDeviceCaps(drawer.hdc, VERTRES);
+	rect(drawer, 0,0, w,h, r,g,b);
+}
+
+void text(Drawer drawer, int x, int y, char* str, int strLen)
+{
+	RECT rect = {x, y, 100, 100};
+	DrawTextExA(drawer.hdc, str, strLen, &rect, DT_NOCLIP|DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER|DT_RIGHT, 0);
+}
+
+void text_w(Drawer drawer, int x, int y, wchar_t* str, int strLen)
+{
+	RECT rect = {x, y, 100, 100};
+	DrawTextExW(drawer.hdc, str, strLen, &rect, DT_NOCLIP|DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER|DT_RIGHT, 0);
+}
+
+void paint(HWND hWnd, State* state)
+{
+	Drawer drawer = make_drawer(hWnd);
+
+	fill(drawer, 255, 255, 255);
+	rect(drawer, 20, 20, 200, 200, 255, 255, 0);
+
+	if (state)
+	{
+		for (int x = state->x - 50; x < state->x + 50; ++x)
+			pixel(drawer, x, state->y, 255, 0, 0);
+
+		rect(drawer, state->x, state->y - 50, 1, 100, 0, 0, 255);
+	}
+
+	text(drawer, 30, 30, "Hello, World!", -1);
+	text_w(drawer, 30, 60, L"Hëllö, Wärld!", -1);
+
+	free_drawer(hWnd, drawer);
+}
+
+int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message)
+	{
+		case WM_CREATE:
+		{
+			if (!SetWindowPos(hWnd, NULL, 2000, 70, 0, 0, SWP_NOSIZE | SWP_NOZORDER))
+				FATAL(0, "Failed to position window. Error: ", GetLastError());
+
+			CREATESTRUCT *pCreate = (CREATESTRUCT*)lParam;
+			State* state = (State*)pCreate->lpCreateParams;
+			FATAL(state->initialized == StateInitializedMagicNumber, "State not initialized in message loop.");
+			SetLastError(0);
+			if (!SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)state) && GetLastError() != 0)
+				printf("State set failed. Error: %d\n", GetLastError());
+
+			break;
+		}
+		case WM_PAINT:
+		{
+			printf("WM_PAINT");
+			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+			if (!state)
+				printf("No state.\n");
+
+			paint(hWnd, state);
+			break;
+		}
+		case WM_KEYDOWN:
+		{
+
+			WORD keyFlags = HIWORD(lParam);
+			WORD repeatCount = LOWORD(lParam);
+			if ((keyFlags & KF_REPEAT) != KF_REPEAT)
+			{
+				printf("*click* *whrrrrrrrr*\n");
+				extern int take_screenshot(HWND);
+				take_screenshot(hWnd);
+			}
+			else
+			{
+				printf("Key repeat. Repeat count since last handled message: %d\n", LOWORD(lParam));
+			}
+			return DefWindowProc(hWnd, message, wParam, lParam);
+		}
+		case WM_DESTROY:
+		{
+			//PostQuitMessage(0);
+			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+			if (state)
+				state->window_closed = 1;
+			// fallthrough
+		}
+		default:
+			printf("%x\n", message);
+			return DefWindowProc(hWnd, message, wParam, lParam);
+	}
+	return 0;
+}
+
 void create_window(State* state)
 {
 	state->old_window_proc = (unsigned long long)window_message_handler;
@@ -1101,6 +1149,13 @@ static void setup(State* state)
 	printf("\n\nGo to the `update` function at the bottom of this source file and edit the `state->x` and `state->y` variable assignments or something, and see what happens. :)\n\n");
 }
 
+void tick(State* state)
+{
+	// Modify these, save and note the cross being repainted to a different spot
+	state->x = 200;
+	state->y = 150;
+}
+
 __declspec(dllexport) void update(Communication* communication)
 {
 	FATAL(sizeof(State) <= communication->buffer_size, "State is larger than the buffer. %lld <= %lld", sizeof(State), communication->buffer_size);
@@ -1112,9 +1167,7 @@ __declspec(dllexport) void update(Communication* communication)
 	if (state->tick % 100 == 0)
 		printf("update(%5d)\n", state->tick);
 
-	// Modify these, save and note the cross being repainted to a different spot
-	state->x = 200;
-	state->y = 150;
+	tick(state);
 
 	if (state->hWnd && communication->was_recompiled)
 		RedrawWindow(state->hWnd, NULL, NULL, RDW_INVALIDATE);
