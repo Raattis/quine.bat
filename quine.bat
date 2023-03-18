@@ -536,6 +536,8 @@ size_t scan_includes(char* source_file, char** files_to_watch, size_t files_to_w
 		char* include_file = files_to_watch[written];
 		if (include_file == 0 || strncmp(include_file, begin, end - begin) != 0)
 		{
+			extern void free(void*);
+			extern void* malloc(size_t);
 			if (include_file != 0)
 				free(include_file);
 
@@ -617,7 +619,7 @@ void handle_commandline_arguments()
 		char* files_to_watch[256] = {0};
 		size_t files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
 
-		while (1)
+		for (;;)
 		{
 			int was_recompiled = 0;
 
@@ -667,7 +669,7 @@ void handle_commandline_arguments()
 				if (err != 0)
 				{
 					fprintf(stderr, "Failed to recompile %s using included source code.\n", dll_filename);
-					Sleep(5000);
+					Sleep(2000);
 					continue;
 				}
 
@@ -759,6 +761,7 @@ void _runmain() { _start(); }
 
 #include <stdio.h>
 #include <windows.h>
+#include <time.h>
 
 #define SEGMENT_NAME "dll"
 #define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
@@ -849,12 +852,9 @@ int take_screenshot(HWND hWnd)
 	SelectObject(hdcMemDC, hbmScreen);
 
 	// Bit block transfer into our compatible memory DC.
-	if (!BitBlt(hdcMemDC,
-		0, 0,
+	if (!BitBlt(hdcMemDC, 0, 0,
 		rcClient.right - rcClient.left, rcClient.bottom - rcClient.top,
-		hdcWindow,
-		0, 0,
-		SRCCOPY))
+		hdcWindow, 0, 0, SRCCOPY))
 	{
 		MessageBox(hWnd, TEXT("BitBlt has failed"), TEXT("Failed"), MB_OK);
 		goto done;
@@ -894,7 +894,7 @@ int take_screenshot(HWND hWnd)
 		(BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
 	// A file is created, this is where we will save the screen capture.
-	hFile = CreateFile(TEXT("captureqwsx.bmp"),
+	hFile = CreateFile(TEXT("screenshot.bmp"),
 		GENERIC_WRITE,
 		0,
 		NULL,
@@ -934,40 +934,93 @@ done:
 	return 0;
 }
 
+enum { TetrisWidth = 10, TetrisHeight = 22 };
+typedef enum { PieceL, PieceJ, PieceI, PieceO, PieceT, PieceS, PieceZ } PieceType;
+
 typedef struct
 {
-	int initialized;
-	unsigned tick;
-	HWND hWnd;
+	PieceType type;
+	int rotation;
 	int x, y;
+} TetrisPiece;
+
+typedef signed long long i64;
+typedef struct
+{
+	TetrisPiece current_piece;
+	unsigned char board[TetrisWidth * TetrisHeight];
+	int difficulty;
+	int lines_cleared;
+	int score;
+	i64 start_time;
+	i64 delta_time_us;
+	i64 current_time_us;
+	i64 fall_timer;
+	int game_over;
+	int input_left;
+	int input_right;
+	int input_down;
+	int input_rotate;
+	int input_drop;
+} Tetris;
+
+typedef struct
+{
+	HWND hWnd;
+	int initialized;
+	int redraw_requested;
 	int window_closed;
+	unsigned tick;
+	int x, y;
 	unsigned long long old_window_proc;
+	
+	Tetris tetris;
 } State;
-enum { StateInitializedMagicNumber = 12345 };
+enum { StateInitializedMagicNumber = 123456 };
 
 typedef struct
 {
 	PAINTSTRUCT ps;
+	HDC screen_device_context;
 	HDC hdc;
+	HBITMAP bitmap;
+	HGDIOBJ previous_gdi_object;
+	int screen_width;
+	int screen_height;
 } Drawer;
 
 Drawer make_drawer(HWND hWnd)
 {
 	Drawer drawer;
-	drawer.hdc = BeginPaint(hWnd, &drawer.ps);
+	
+	RECT screen_rect;
+	GetClientRect(hWnd, &screen_rect);
+	drawer.screen_width = screen_rect.right;
+	drawer.screen_height = screen_rect.bottom;
+	
+	drawer.screen_device_context = BeginPaint(hWnd, &drawer.ps);
+	drawer.hdc = CreateCompatibleDC(drawer.screen_device_context);
+	drawer.bitmap = CreateCompatibleBitmap(drawer.screen_device_context, drawer.screen_width, drawer.screen_height);
+	drawer.previous_gdi_object = SelectObject(drawer.hdc, drawer.bitmap);
 	return drawer;
 }
 
 void free_drawer(HWND hWnd, Drawer drawer)
 {
+	BitBlt(drawer.screen_device_context, 0, 0, drawer.screen_width, drawer.screen_height, drawer.hdc, 0, 0, SRCCOPY);
+
+	SelectObject(drawer.hdc, drawer.previous_gdi_object);
+	DeleteObject(drawer.bitmap);
+	DeleteDC(drawer.hdc);
+	ReleaseDC(hWnd, drawer.screen_device_context);
 	EndPaint(hWnd, &drawer.ps);
 }
 
 void pixel(Drawer drawer, int x, int y, int r, int g, int b)
 {
 	int success = SetPixel(drawer.hdc, x, y, RGB(r, g, b));
-	if (success < 0)
-		fprintf(stderr, "Failed to set pixel to color. (%d, %d) -> (%d,%d,%d)", x,y, r,g,b);
+	//if (success < 0)
+	//	fprintf(stderr, "Failed to set pixel to color. (%d, %d) -> (%d,%d,%d)", x,y, r,g,b);
 }
 
 void rect(Drawer drawer, int x, int y, int w, int h, int r, int g, int b)
@@ -989,15 +1042,23 @@ void fill(Drawer drawer, int r, int g, int b)
 
 void text(Drawer drawer, int x, int y, char* str, int strLen)
 {
-	RECT rect = {x, y, 100, 100};
-	DrawTextExA(drawer.hdc, str, strLen, &rect, DT_NOCLIP|DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER|DT_RIGHT, 0);
+	RECT rect = {x, y, x, y};
+	DrawTextExA(drawer.hdc, str, strLen, &rect, DT_NOCLIP|DT_NOPREFIX|DT_SINGLELINE|DT_CENTER|DT_VCENTER, 0);
 }
 
 void text_w(Drawer drawer, int x, int y, wchar_t* str, int strLen)
 {
-	RECT rect = {x, y, 100, 100};
-	DrawTextExW(drawer.hdc, str, strLen, &rect, DT_NOCLIP|DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER|DT_RIGHT, 0);
+	RECT rect = {x, y, x, y};
+	DrawTextExW(drawer.hdc, str, strLen, &rect, DT_NOCLIP|DT_NOPREFIX|DT_SINGLELINE|DT_CENTER|DT_VCENTER, 0);
 }
+
+i64 microseconds(clock_t start_time)
+{
+	clock_t c = clock() - start_time;
+	return ((i64)c) * (1000000ull / CLOCKS_PER_SEC);
+}
+
+void tetris_draw(Drawer drawer, Tetris* tetris);
 
 void paint(HWND hWnd, State* state)
 {
@@ -1005,18 +1066,20 @@ void paint(HWND hWnd, State* state)
 
 	fill(drawer, 255, 255, 255);
 	rect(drawer, 20, 20, 200, 200, 255, 255, 0);
-
+	
 	if (state)
 	{
 		for (int x = state->x - 50; x < state->x + 50; ++x)
 			pixel(drawer, x, state->y, 255, 0, 0);
-
+	
 		rect(drawer, state->x, state->y - 50, 1, 100, 0, 0, 255);
 	}
-
+	
 	text(drawer, 30, 30, "Hello, World!", -1);
 	text_w(drawer, 30, 60, L"Hëllö, Wärld!", -1);
-
+	
+	tetris_draw(drawer, &state->tetris);
+	
 	free_drawer(hWnd, drawer);
 }
 
@@ -1036,21 +1099,53 @@ int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 			if (!SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)state) && GetLastError() != 0)
 				printf("State set failed. Error: %d\n", GetLastError());
 
-			break;
+			return 0;
 		}
+		case WM_ERASEBKGND:
+			//printf("WM_ERASEBKGND\n");
+			break;
+		case WM_SETREDRAW:
+			printf("WM_SETREDRAW\n");
+			break;
 		case WM_PAINT:
 		{
-			printf("WM_PAINT");
-			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+			//printf("WM_PAINT\n");
+			State* state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
 			if (!state)
 				printf("No state.\n");
 
 			paint(hWnd, state);
-			break;
+			return 1;
 		}
 		case WM_KEYDOWN:
 		{
-
+			if (wParam == VK_ESCAPE)
+			{
+				printf("VK_ESCAPE\n");
+				DestroyWindow(hWnd);
+				return 0;
+			}
+			
+			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+			switch (wParam)
+			{
+				case VK_LEFT:
+					state->tetris.input_left = 1;
+					return 0;
+				case VK_RIGHT:
+					state->tetris.input_right = 1;
+					return 0;
+				case VK_DOWN:
+					state->tetris.input_down = 1;
+					return 0;
+				case VK_UP:
+					state->tetris.input_rotate = 1;
+					return 0;
+				case VK_SPACE:
+					state->tetris.input_drop = 1;
+					return 0;
+			}
+			
 			WORD keyFlags = HIWORD(lParam);
 			WORD repeatCount = LOWORD(lParam);
 			if ((keyFlags & KF_REPEAT) != KF_REPEAT)
@@ -1063,10 +1158,14 @@ int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 			{
 				printf("Key repeat. Repeat count since last handled message: %d\n", LOWORD(lParam));
 			}
-			return DefWindowProc(hWnd, message, wParam, lParam);
+			break;
 		}
+		case WM_QUIT:
+			printf("WM_QUIT\n");
+			break;
 		case WM_DESTROY:
 		{
+			printf("WM_DESTROY\n");
 			//PostQuitMessage(0);
 			State *state = (State*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
 			if (state)
@@ -1074,10 +1173,10 @@ int window_message_handler_impl(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 			// fallthrough
 		}
 		default:
-			printf("%x\n", message);
-			return DefWindowProc(hWnd, message, wParam, lParam);
+			//printf("%x\n", message);
+			break;
 	}
-	return 0;
+	return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
 void create_window(State* state)
@@ -1111,27 +1210,283 @@ int poll_messages(State* state)
 		return 0;
 
 	MSG msg;
-	while (PeekMessage(&msg, state->hWnd, 0, 0, 0))
+	while (PeekMessage(&msg, state->hWnd, 0, 0, PM_REMOVE))
 	{
-		if (GetMessage(&msg, state->hWnd, 0, 0))
-		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
-		else
-		{
-			printf("!GetMessage -> %d\n", (int)msg.wParam);
-			return 1;
-		}
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
 	}
 	return 0;
+}
+
+void get_block_offsets(PieceType piece_type, int rotation, int* out_offsets_x, int* out_offsets_y)
+{
+	//                     PieceL,  PieceJ,  PieceI, PieceO, PieceT,  PieceS,  PieceZ
+	int offsets_x[7*3] = {-1,-1,1,  1,-1,1, -1,1,2,  1,0,1,  1,-1,0,  1,0,-1, -1,0,1};
+	int offsets_y[7*3] = { 1, 0,0,  1, 0,0,  0,0,0,  0,1,1,  0, 0,1,  0,1, 1,  0,1,1};
+
+	//                       L, J, I, O, T, S, Z
+	int rotation_counts[] = {4, 4, 2, 1, 4, 2, 2};
+
+	out_offsets_x[0] = out_offsets_y[0] = 0;
+	for (int i = 1; i < 4; ++i)
+	{
+		out_offsets_x[i] = offsets_x[piece_type * 3 + i-1];
+		out_offsets_y[i] = offsets_y[piece_type * 3 + i-1];
+	}
+
+	rotation = rotation % rotation_counts[piece_type];
+	for (int r = 0; r < rotation; ++r)
+	{
+		for (int i = 1; i < 4; ++i)
+		{
+			int temp = out_offsets_x[i];
+			out_offsets_x[i] = -out_offsets_y[i];
+			out_offsets_y[i] = temp;
+		}
+	}
+}
+
+void get_piece_blocks(TetrisPiece piece, int* out_piece_x, int* out_piece_y)
+{
+	int piece_offsets_x[4] = {0};
+	int piece_offsets_y[4] = {0};
+	get_block_offsets(piece.type, piece.rotation, piece_offsets_x, piece_offsets_y);
+
+	for (int i = 0; i < 4; ++i)
+	{
+		out_piece_x[i] = piece.x + piece_offsets_x[i];
+		out_piece_y[i] = piece.y + piece_offsets_y[i];
+	}
+}
+
+void get_tetris_color(int tile_color, int* r, int* g, int* b)
+{
+	int x = 170, y = 70, z = 110;
+	switch(tile_color)
+	{
+	case 0: *r = *g = *b = 0; return;
+	case 1: *r = x; *g = *b = y; return;
+	case 2: *g = x; *r = *b = y; return;
+	case 3: *b = x; *r = *g = y; return;
+	case 4: *r = *b = x; *g = y; return;
+	case 5: *g = *r = x; *b = y; return;
+	case 6: *b = *g = x; *r = y; return;
+	case 7: *b = *r = *g = z; return;
+	}
+}
+
+void tetris_draw(Drawer drawer, Tetris* tetris)
+{
+	RECT screen_rect;
+	GetClientRect(WindowFromDC(drawer.screen_device_context), &screen_rect);
+	int screen_height = screen_rect.bottom - screen_rect.top;
+	int h = (screen_height - 20) / TetrisHeight;
+	int w = h;
+	int margin = (screen_height - h * TetrisHeight) / 2;
+	rect(drawer, 0, 0, w * TetrisWidth + margin*2, screen_height, 70,10,50);
+
+	int piece_x[4] = {0};
+	int piece_y[4] = {0};
+	get_piece_blocks(tetris->current_piece, piece_x, piece_y);
+
+	for (int y = 0; y < TetrisHeight; ++y)
+	{
+		for (int x = 0; x < TetrisWidth; ++x)
+		{
+			int tile_color = tetris->board[y * TetrisWidth + x];
+			
+			for (int i = 0; i < 4; ++i)
+			{
+				if (piece_x[i] == x && piece_y[i] == y)
+					tile_color = tetris->current_piece.type + 1;
+			}
+			
+			int r,g,b;
+			get_tetris_color(tile_color, &r,&g,&b);
+			rect(drawer, x * w + w, y * h + h, w, h, r,g,b);
+		}
+	}
+	
+	char score_buffer[32];
+	sprintf(score_buffer, "%d", tetris->score);
+	text(drawer, drawer.screen_width / 2, 30, score_buffer, -1);
+	
+	if (tetris->game_over)
+		text(drawer, drawer.screen_width / 2, 60, "Game Over!", -1);
+}
+
+int collides(unsigned char* board, int* offsets_x, int* offsets_y, int x, int y)
+{
+	for (int i = 0; i < 4; ++i)
+	{
+		int xx = x + offsets_x[i];
+		int yy = y + offsets_y[i];
+		if (xx < 0 || xx >= TetrisWidth)
+			return 1;
+		if (yy >= TetrisHeight)
+			return 1;
+		if (yy < 0)
+			continue;
+		
+		if (board[xx + yy * TetrisWidth])
+			return 1;
+	}
+	
+	return 0;
+}
+
+int move_to(Tetris* tetris, int x, int y, int r)
+{
+	int offsets_x[4];
+	int offsets_y[4];
+	get_block_offsets(tetris->current_piece.type, tetris->current_piece.rotation + r, offsets_x, offsets_y);
+
+	if (collides(tetris->board, offsets_x, offsets_y, tetris->current_piece.x + x, tetris->current_piece.y + y))
+		return 0;
+	
+	tetris->current_piece.rotation += r;
+	tetris->current_piece.x += x;
+	tetris->current_piece.y += y;
+	return 1;
+}
+
+void tetris_setup(Tetris* tetris)
+{
+	memset(tetris, 0, sizeof *tetris);
+	tetris->start_time = microseconds(0);
+	tetris->current_piece.x = 5;
+	tetris->difficulty = 1;
+}
+
+void tetris_update(Tetris* tetris)
+{
+	if (tetris->game_over)
+	{
+		if (tetris->input_drop)
+			tetris_setup(tetris);
+		return;
+	}
+	
+	{
+		i64 t = microseconds(tetris->start_time);
+		tetris->delta_time_us = t - tetris->current_time_us;
+		tetris->current_time_us = t;
+	}
+	
+	int move_left = tetris->input_left;
+	int move_right = tetris->input_right;
+	int move_down = tetris->input_down;
+	int rotate = tetris->input_rotate;
+	int drop = tetris->input_drop;
+	tetris->input_left = tetris->input_right = tetris->input_down = tetris->input_rotate = tetris->input_drop = 0;
+	
+	tetris->fall_timer -= tetris->delta_time_us;
+	
+	i64 drop_rate = 1000 * 1000 / tetris->difficulty;
+	if (drop)
+	{
+		tetris->fall_timer = drop_rate;
+	}
+	else if (move_down)
+	{
+		tetris->fall_timer = drop_rate;
+		tetris->score += 1;
+	}
+	else if (tetris->fall_timer <= 0)
+	{
+		move_down = 1;
+		tetris->fall_timer += drop_rate;
+		if (tetris->fall_timer < 0)
+			tetris->fall_timer = drop_rate; // No double drops if the game was paused etc.
+	}
+	
+	
+	if (rotate)
+	{
+		int i_piece_nudge = tetris->current_piece.type == PieceI && tetris->current_piece.x >= 8;
+		
+		move_to(tetris, 0,0,1)
+		|| move_to(tetris,  1,0,1)
+		|| move_to(tetris, -1,0,1)
+		|| (i_piece_nudge && move_to(tetris, -2,0,1))
+		|| move_to(tetris, 0,1,1);
+	}
+
+	if (move_left)
+		move_to(tetris, -1,0,0);
+
+	if (move_right)
+		move_to(tetris, 1,0,0);
+
+	if (drop)
+	{
+		while (move_to(tetris, 0,1,0))
+			tetris->score += 1;
+		move_down = 1;
+	}
+
+	if (move_down)
+	{
+		if (!move_to(tetris, 0,1,0))
+		{
+			int offsets_x[4];
+			int offsets_y[4];
+			get_block_offsets(tetris->current_piece.type, tetris->current_piece.rotation, offsets_x, offsets_y);
+		
+			// stick
+			for (int i = 0; i < 4; ++i)
+			{
+				int x = tetris->current_piece.x + offsets_x[i];
+				int y = tetris->current_piece.y + offsets_y[i];
+				tetris->board[x + y * TetrisWidth] = tetris->current_piece.type + 1;
+			}
+
+			// destroy
+			int lines_cleared = 0;
+			for (int y = TetrisHeight; y-- > 0;)
+			{
+				int block_count = 0;
+				for (int x = 0; x < TetrisWidth; ++x)
+				{
+					int val = tetris->board[x + y * TetrisWidth];
+					if (val)
+						block_count += 1;
+					
+					tetris->board[x + y * TetrisWidth] = 0;
+					tetris->board[x + (y + lines_cleared) * TetrisWidth] = val;
+				}
+				
+				if (block_count == 10)
+					lines_cleared += 1;
+			}
+
+			// meta
+			tetris->lines_cleared += lines_cleared;
+			tetris->score += lines_cleared * lines_cleared * 100 * tetris->difficulty;
+			tetris->difficulty = 1 + tetris->lines_cleared / 10;
+
+			// new piece
+			tetris->current_piece.type = (tetris->current_piece.type + 1) % 7;
+			tetris->current_piece.x = 5;
+			tetris->current_piece.y = 0;
+			tetris->current_piece.rotation = 0;
+
+			if (!move_to(tetris, 0,0,0))
+			{
+				tetris->game_over = 1;
+				printf("Game Over! Final Score: %d\n", tetris->score);
+			}
+		}
+	}
 }
 
 static void setup(State* state)
 {
 	if (state->initialized == StateInitializedMagicNumber)
 	{
-		FATAL(state->old_window_proc == (unsigned long long)window_message_handler, "Window message handler function address moved. 0x%X == 0x%X\n", state->old_window_proc, (unsigned long long)window_message_handler);
+		FATAL(state->old_window_proc == (unsigned long long)window_message_handler
+			, "Window message handler function address moved. 0x%X == 0x%X\n"
+			, state->old_window_proc, (unsigned long long)window_message_handler);
 		return;
 	}
 
@@ -1141,6 +1496,8 @@ static void setup(State* state)
 	state->tick = 0;
 	state->x = 200;
 	state->y = 150;
+	
+	tetris_setup(&state->tetris);
 
 	create_window(state);
 
@@ -1153,7 +1510,11 @@ void tick(State* state)
 {
 	// Modify these, save and note the cross being repainted to a different spot
 	state->x = 200;
-	state->y = 150;
+	state->y = 100;
+	
+	tetris_update(&state->tetris);
+
+	state->redraw_requested = 1;
 }
 
 __declspec(dllexport) void update(Communication* communication)
@@ -1169,8 +1530,8 @@ __declspec(dllexport) void update(Communication* communication)
 
 	tick(state);
 
-	if (state->hWnd && communication->was_recompiled)
-		RedrawWindow(state->hWnd, NULL, NULL, RDW_INVALIDATE);
+	if (state->hWnd && (communication->was_recompiled || state->redraw_requested))
+		RedrawWindow(state->hWnd, NULL, NULL, RDW_INVALIDATE); // Add "|RDW_ERASE" to see the flicker that is currently hidden by double buffering the draw target.
 
 	if (poll_messages(state) != 0)
 		communication->stop = 1;
