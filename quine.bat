@@ -1,4 +1,4 @@
-: " In sh this is the beginning of a multiline comment, in batch this is a valid label.
+: " This is the beginning of a multiline comment in sh and a valid label in batch.
 @goto batch_bootstrap_builder "
 if false; then */
 #error Remember to insert "#if 0" into the compiler input pipe or skip the first 5 lines when compiling this file.
