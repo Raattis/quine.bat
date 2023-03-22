@@ -1345,15 +1345,14 @@ void tetris_draw(Drawer drawer, Tetris* tetris)
 
 				if (piece_y[i] == y)
 					piece_hit = 1;
-
-				if (piece_y[i] - tetris->current_piece.y + shadow_piece.y == y)
+				else if (piece_y[i] - tetris->current_piece.y + shadow_piece.y == y)
 					shadow_piece_hit = 1;
-
-				if (piece_y[i] - tetris->current_piece.y + shadow_piece.y > y)
+				else if (piece_y[i] - tetris->current_piece.y + shadow_piece.y > y)
 					shadow_hit = 1;
+				else
+					continue;
 
-				if (piece_hit || shadow_piece_hit || shadow_hit)
-					tile_color = tetris->current_piece.type + 1;
+				tile_color = tetris->current_piece.type + 1;
 			}
 
 			int r,g,b;
