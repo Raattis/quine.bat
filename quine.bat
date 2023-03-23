@@ -130,7 +130,7 @@ static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib 
 static const int b_create_c_file = 0;
 static const int b_create_preprocessed_builder = 0;
 static const int b_compile_dll = 1;
-static const int b_compile_source = 0;
+static const int b_compile_source = 1;
 static const int b_create_exe_file = 1;
 static const int b_run_after_build = 1;
 static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
@@ -207,9 +207,22 @@ int compile(const char* output_c, const char* output_exe)
 	return result;
 }
 
-FILE* create_compilation_process()
+int compile_and_run(const char* output_c)
 {
-	snprintf(buffer, sizeof(buffer), "%s -x c - -o %s %s", b_compiler_executable_path, b_output_exe_filename, b_compiler_arguments);
+	snprintf(buffer, sizeof(buffer), "%s %s %s -run", b_compiler_executable_path, output_c, b_compiler_arguments);
+	int result = system(buffer);
+	FATAL(result == 0, "Error while compiling '%s'. Error value: %d", output_c, result);
+	return result;
+}
+
+FILE* create_compilation_process(const char* run_arguments)
+{
+	int run_immediately = !b_create_exe_file && b_run_after_build;
+	if (run_immediately)
+		snprintf(buffer, sizeof(buffer), "%s %s -run -x c - %s %s", b_compiler_executable_path, b_compiler_arguments, b_output_exe_filename, run_arguments);
+	else
+		snprintf(buffer, sizeof(buffer), "%s %s -x c - -o %s", b_compiler_executable_path, b_compiler_arguments, b_output_exe_filename);
+
 	FILE* compiler_pipe = popen(buffer, "w");
 	if (compiler_pipe)
 		return compiler_pipe;
@@ -358,10 +371,24 @@ void main()
 		exit(0);
 	}
 
+	if (b_compile_dll)
+	{
+		FILE* infile = fopen(b_source_filename, "r");
+		FILE* compiler_pipe = create_dll_compilation_process();
+		FATAL(compiler_pipe, "Failed to create a compiler_pipe for '%s'.", b_output_dll_filename);
+
+		int line_number = 0;
+		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, compiler_pipe, b_source_filename, &line_number);
+		insert_snippet("#ifdef DLL", "#endif // DLL", infile, compiler_pipe, b_source_filename, &line_number);
+
+		int err = pclose(compiler_pipe);
+		FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
+	}
+
 	if (b_compile_source || b_create_c_file || b_create_exe_file)
 	{
 		FILE* infile = fopen(b_source_filename, "r");
-		FILE* outfile = b_create_c_file ? fopen(b_output_c_filename, "w") : create_compilation_process();
+		FILE* outfile = b_create_c_file ? fopen(b_output_c_filename, "w") : create_compilation_process(b_run_arguments);
 
 		int line_number = 0;
 		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, outfile, b_source_filename, &line_number);
@@ -382,31 +409,26 @@ void main()
 			{
 				int err = compile(b_output_c_filename, b_output_exe_filename);
 				if (err != 0)
-					FATAL(0, "Failed to compile created %s.", b_output_c_filename);
+					FATAL(0, "Failed to compile created '%s'.", b_output_c_filename);
+			}
+			else if (b_run_after_build)
+			{
+				int err = compile_and_run(b_output_c_filename);
+				if (err != 0)
+					FATAL(0, "Error encountered while doing compile&run for created '%s'.", b_output_c_filename);
 			}
 		}
 		else
 		{
 			int err = pclose(outfile);
-			FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
+			if (b_run_after_build && !b_create_exe_file)
+				FATAL(err == 0, "Run-after-build finished with errors. Error code: %d", err);
+			else
+				FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
 		}
 	}
 
-	if (b_compile_dll)
-	{
-		FILE* infile = fopen(b_source_filename, "r");
-		FILE* compiler_pipe = create_dll_compilation_process();
-		FATAL(compiler_pipe, "Failed to create a compiler_pipe for '%s'.", b_output_dll_filename);
-
-		int line_number = 0;
-		insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, compiler_pipe, b_source_filename, &line_number);
-		insert_snippet("#ifdef DLL", "#endif // DLL", infile, compiler_pipe, b_source_filename, &line_number);
-
-		int err = pclose(compiler_pipe);
-		FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
-	}
-
-	if (b_run_after_build)
+	if (b_create_exe_file && b_run_after_build)
 	{
 		FATAL(b_create_exe_file, "Can't run exe if it wasn't built.");
 
@@ -555,12 +577,16 @@ size_t scan_includes(char* source_file, char** files_to_watch, size_t files_to_w
 
 void handle_commandline_arguments()
 {
-	char* commandLine = GetCommandLine();
+	char* command_line = GetCommandLine();
+	char* runtime_arguments_after = strstr(command_line, " - ");
+	if (runtime_arguments_after)
+		command_line = runtime_arguments_after + 3;
+	printf("%s\n", command_line);
 
 	{
 		int len = 0;
-		int err = sscanf(commandLine, "%s%n", exe_filename, &len);
-		FATAL(err == 1, "Failed to get filename from GetCommandLine(): '%s', err: %d", commandLine, err);
+		int err = sscanf(command_line, "%s%n", exe_filename, &len);
+		FATAL(err == 1, "Failed to get filename from GetCommandLine(): '%s', err: %d", command_line, err);
 
 		if (exe_filename[len - 1] == '"')
 		{
@@ -585,20 +611,20 @@ void handle_commandline_arguments()
 		sprintf(bat_new_filename + len - 4, "_new.bat");
 	}
 
-	if (strstr(commandLine, " -h") || strstr(commandLine, "--help"))
+	if (strstr(command_line, " -h") || strstr(command_line, "--help"))
 	{
 	}
-	else if (strstr(commandLine, "--print_source"))
+	else if (strstr(command_line, "--print_source"))
 	{
 		extern const char* b_source_string;
 		printf("%s", b_source_string);
 
 		finished();
 	}
-	else if (strstr(commandLine, "--create_builder"))
+	else if (strstr(command_line, "--create_builder"))
 	{
 		FILE* out = fopen(bat_new_filename, "w");
-		FATAL(out, "Failed to get filename from GetCommandLine(): '%s'", commandLine);
+		FATAL(out, "Failed to get filename from GetCommandLine(): '%s'", command_line);
 
 		extern const char* b_source_string;
 		fputs(b_source_string, out);
@@ -607,7 +633,7 @@ void handle_commandline_arguments()
 
 		finished();
 	}
-	else if(strstr(commandLine, "--dll"))
+	else if(strstr(command_line, "--dll"))
 	{
 		void* malloc(size_t);
 		void* user_buffer = malloc(1000);
@@ -733,6 +759,7 @@ void handle_commandline_arguments()
 		printf("\n" "  Flags:");
 		printf("\n" "    --print_source\tPrint the source code this program was built with into stdout.");
 		printf("\n" "    --create_builder\tOutputs a '%s_new.bat' file that can build this executable.", bat_filename);
+		printf("\n" "    --dll\t\tCreates a runtime recompilation loop that reacts to changes in the '%s' file.", bat_filename);
 		printf("\n\n");
 
 		finished();
@@ -1333,7 +1360,6 @@ void tetris_draw(Drawer drawer, Tetris* tetris)
 		for (int x = 0; x < TetrisWidth; ++x)
 		{
 			int tile_color = tetris->board[y * TetrisWidth + x];
-			int board_hit = tile_color != 0;
 			int piece_hit = 0;
 			int shadow_hit = 0;
 			int shadow_piece_hit = 0;
@@ -1343,11 +1369,12 @@ void tetris_draw(Drawer drawer, Tetris* tetris)
 				if (piece_x[i] != x || piece_y[i] > y)
 					continue;
 
+				int shadow_y = piece_y[i] - tetris->current_piece.y + shadow_piece.y;
 				if (piece_y[i] == y)
 					piece_hit = 1;
-				else if (piece_y[i] - tetris->current_piece.y + shadow_piece.y == y)
+				else if (shadow_y == y)
 					shadow_piece_hit = 1;
-				else if (piece_y[i] - tetris->current_piece.y + shadow_piece.y > y)
+				else if (shadow_y > y)
 					shadow_hit = 1;
 				else
 					continue;
