@@ -7,12 +7,11 @@ This is a single file "builder", C program and runtime recompilation loop
 # Other stuff
 There are a bunch of flags in the file. These can be used to modify the active functionality, which files are output on the disk and which are just `-run` directly with tcc. Note: the name `quine` is not hardcoded anywhere, the name of the .bat file is used when naming output files.
 * `b_create_preprocessed_builder` // Outputs a `quine_preprocessed.bat` which has identical functionality to `quine.bat` but has all of the #includes (and macros) baked in
-* `b_create_c_file` // Outputs a quine.c from the `#if SOURCE` section
-* `b_compile_dll` // Outputs a quine.dll from the `#if DLL` section
-* `b_compile_source`  // Compiles `#if SOURCE` section. Doesn't produce `quine.exe` unless `b_create_exe_file` is enabled
-* `b_create_exe_file` // Outputs a quine.exe from the `#if SOURCE` section
-* `b_run_after_build` // Runs the program built from `#if SOURCE` section. If an exe was output it'll be used, otherwise the `tcc -run` functionality is used
-* `b_run_arguments` // Arguments passed to the program built from `#if SOURCE`. Some options: --dll --print_source --create_builder --help
+* `b_create_c_file` // Outputs a quine.c from the SOURCE section
+* `b_create_exe_file` // Outputs a quine.exe from the SOURCE section
+* `b_create_dll_file` // Outputs a quine.dll from the DLL section
+* `b_run_after_build` // Runs the program built from SOURCE section. Uses "tcc -run" unless b_create_exe_file is enabled in which case the exe file will be ran
+* `b_run_arguments` // Arguments passed to the program built from SOURCE. Some options: --dll --print_source --create_builder --help
 * `b_verbose` // Enables some extra logging while building
 
 # Linux
