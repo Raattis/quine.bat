@@ -15,7 +15,7 @@ There are a bunch of flags in the file. These can be used to modify the active f
 * `b_verbose` // Enables some extra logging while building
 
 # Linux
-The runtime recompilation loop is very Windows-only but the BUILDER part works on Linux too.
+The runtime recompilation loop is very Windows-only but the BUILDER part works on Linux too. Note that on Linux gcc is used instead of tcc.
 * `chmod +x quine.bat`
 * `./quine.bat`
 * Change `#define HELLO_WORLD` to `#define BUILDER` and tweak the various `b_create_exe_file` style settings to prevent trying to compile Windows-only code. Maybe turn on `b_create_c_file` so you can see the quine.c file being output.
