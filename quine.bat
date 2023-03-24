@@ -136,12 +136,12 @@ static const int b_create_c_file = 0;
 static const int b_create_exe_file = 0;
 
 // Outputs a .dll file from the DLL section
-static const int b_create_dll_file = 1;
+static const int b_create_dll_file = 0;
 
 // Runs the program built from SOURCE section. Uses "tcc -run" unless b_create_exe_file is enabled in which case the exe file will be ran
 static const int b_run_after_build = 1;
 
-// Enables some extra logging while building
+// Enables some extra logging during build
 static const int b_verbose = 1;
 
 // Arguments passed to the program built from SOURCE
@@ -684,15 +684,19 @@ void handle_commandline_arguments()
 	}
 	else if(strstr(command_line, "--dll"))
 	{
+		char* files_to_watch[256] = {0};
+		size_t files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
+
 		void* malloc(size_t);
 		void* user_buffer = malloc(1000);
 		int force_recompile = 0;
 
 		HMODULE hModule = LoadLibrary(dll_filename);
-		FATAL(hModule, "Error loading %s. Error: %d", dll_filename, GetLastError());
-
-		char* files_to_watch[256] = {0};
-		size_t files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
+		if (!hModule)
+		{
+			force_recompile = 1;
+			printf("Couldn't load '%s'. Forcing recompile.\n", dll_filename);
+		}
 
 		for (;;)
 		{
@@ -701,6 +705,9 @@ void handle_commandline_arguments()
 			int any_file_modified = 0;
 			for (size_t i = 0; i < files_to_watch_count; ++i)
 			{
+				if (force_recompile) 
+					break;
+				
 				if (cmp_modified_times(dll_filename, files_to_watch[i]) < 0)
 				{
 					printf("Timestamp of '%s' was newer than '%s'\n", files_to_watch[i], dll_filename);
@@ -1027,7 +1034,6 @@ typedef struct
 	int difficulty;
 	int lines_cleared;
 	int score;
-	i64 delta_time_us;
 	i64 current_time_us;
 	i64 fall_timer;
 	int game_over;
@@ -1471,11 +1477,13 @@ void tetris_update(Tetris* tetris)
 			tetris_setup(tetris);
 		return;
 	}
+	
+	i64 delta_time_us = 0;
 
 	{
 		i64 t = microseconds();
-		//printf("fall: %lld, dt: %lld, t: %lld, ct: %lld, -:%lld\n", tetris->fall_timer, tetris->delta_time_us, t, tetris->current_time_us, t - tetris->current_time_us);
-		tetris->delta_time_us = t - tetris->current_time_us;
+		delta_time_us = t - tetris->current_time_us;
+		//printf("fall: %lld, dt: %lld, t: %lld, ct: %lld, -:%lld\n", tetris->fall_timer, delta_time_us, t, tetris->current_time_us, t - tetris->current_time_us);
 		tetris->current_time_us = t;
 	}
 
@@ -1486,7 +1494,7 @@ void tetris_update(Tetris* tetris)
 	int drop = tetris->input_drop;
 	tetris->input_left = tetris->input_right = tetris->input_down = tetris->input_rotate = tetris->input_drop = 0;
 
-	tetris->fall_timer -= tetris->delta_time_us;
+	tetris->fall_timer -= delta_time_us;
 
 	i64 drop_rate = 1000 * 1000 / tetris->difficulty;
 	if (drop)
@@ -1609,12 +1617,12 @@ static void setup(State* state)
 
 	take_screenshot(state->hWnd);
 
-	printf("\n\nGo to the `update` function at the bottom of this source file and edit the `state->x` and `state->y` variable assignments or something, and see what happens. :)\n\n");
+	printf("\n\nGo to the `tick` function at line %d of this source file and edit the 'state->x' and 'state->y' variables or something and see what happens. :)\n\n", __LINE__ + 3);
 }
 
 void tick(State* state)
 {
-	// Modify these, save and note the cross being repainted to a different spot
+	// Modify these, save and note the cross in the window being painted to a different spot
 	state->x = 200;
 	state->y = 100;
 
