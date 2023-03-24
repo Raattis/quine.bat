@@ -129,16 +129,16 @@ int main()
 // Outputs a *_preprocessed.bat which has identical functionality to the original .bat but has all of the #includes (and macros) baked in
 static const int b_create_preprocessed_builder = 0;
 
-// Outputs a *.c from the SOURCE section
+// Outputs a .c from the SOURCE section
 static const int b_create_c_file = 0;
-
-// Outputs a .dll file from the DLL section
-static const int b_create_dll_file = 1;
 
 // Outputs a .exe from the SOURCE section
 static const int b_create_exe_file = 0;
 
-// Runs the program built from SOURCE section. If b_create_exe_file is enabled the created exe file will be used, otherwise the "tcc -run" functionality is used
+// Outputs a .dll file from the DLL section
+static const int b_create_dll_file = 1;
+
+// Runs the program built from SOURCE section. Uses "tcc -run" unless b_create_exe_file is enabled in which case the exe file will be ran
 static const int b_run_after_build = 1;
 
 // Enables some extra logging while building
