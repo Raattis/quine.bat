@@ -126,15 +126,29 @@ int main()
 
 #ifdef BUILDER
 
-static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
-static const int b_create_c_file = 0;
+// Outputs a *_preprocessed.bat which has identical functionality to the original .bat but has all of the #includes (and macros) baked in
 static const int b_create_preprocessed_builder = 0;
-static const int b_compile_dll = 1;
-static const int b_compile_source = 1;
+
+// Outputs a *.c from the SOURCE section
+static const int b_create_c_file = 0;
+
+// Outputs a .dll file from the DLL section
+static const int b_create_dll_file = 1;
+
+// Outputs a .exe from the SOURCE section
 static const int b_create_exe_file = 0;
+
+// Runs the program built from SOURCE section. If b_create_exe_file is enabled the created exe file will be used, otherwise the "tcc -run" functionality is used
 static const int b_run_after_build = 1;
-static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
+
+// Enables some extra logging while building
 static const int b_verbose = 1;
+
+// Arguments passed to the program built from SOURCE
+static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
+
+// Compiler arguments for building the SOURCE and DLL sections
+static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
 
 #include <signal.h>
 #include <stdio.h>
@@ -273,11 +287,38 @@ void main()
 		FILE* out = fopen(package_filename, "w");
 		FILE* infile = fopen(b_source_filename, "r");
 
-		insert_snippet(0, "static const int b_create_preprocessed_builder = 1;", infile, out, 0, 0);
-		fputs("static const int b_create_preprocessed_builder = 0;\n", out);
+		insert_snippet(0, "#ifdef BUILDER", infile, out, 0, 0);
+		fputs("#ifdef BUILDER\n", out);
 
-		insert_snippet(0, "#endif // BUILDER", infile, out, 0, 0);
-		fputs("#endif // BUILDER\n", out);
+		{
+			const char temp_filename[] = "temp_builder_file_to_preprocess.c";
+			FILE* temp_file = fopen(temp_filename, "w");
+			fseek(infile, 0, SEEK_SET);
+
+			insert_snippet("#ifdef BUILDER", "#endif // BUILDER", infile, temp_file, 0, 0);
+			int err = fclose(temp_file);
+			FATAL(err == 0, "Failed to preprocess builder.");
+
+			if (b_verbose) printf("Creating preprocessor for BUILDER\n");
+			FILE* preprocessor_result = create_preprocessor_process(temp_filename);
+
+			{
+				// Skip first line as it's the #line directive with the temp_filename
+				fgets(buffer, sizeof(buffer), preprocessor_result);
+			}
+
+			insert_snippet(0, "static const int b_create_preprocessed_builder = 1;", preprocessor_result, out, 0, 0);
+			fputs("static const int b_create_preprocessed_builder = 0;\n", out);
+
+			while (fgets(buffer, sizeof(buffer), preprocessor_result))
+				fputs(buffer, out);
+			err = pclose(preprocessor_result);
+			FATAL(err == 0, "Failed to preprocess builder.");
+				
+			remove(temp_filename);
+
+			fputs("#endif // BUILDER\n", out);
+		}
 
 		fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
 		fputs("#ifdef SHARED_PREFIX\n", out);
@@ -344,6 +385,14 @@ void main()
 
 		{
 			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
+			fputs("#ifdef ORIGINAL_BUILDER\n", out);
+
+			insert_snippet("#ifdef BUILDER", "#endif // BUILDER", infile, out, 0, 0);
+			fputs("\n#endif // ORIGINAL_BUILDER\n", out);
+		}
+
+		{
+			fputs("\n///////////////////////////////////////////////////////////////////////////////\n\n", out);
 			fputs("#ifdef ORIGINAL_SHARED_PREFIX\n", out);
 
 			insert_snippet("#ifdef SHARED_PREFIX", "#endif // SHARED_PREFIX", infile, out, 0, 0);
@@ -371,7 +420,7 @@ void main()
 		exit(0);
 	}
 
-	if (b_compile_dll)
+	if (b_create_dll_file)
 	{
 		FILE* infile = fopen(b_source_filename, "r");
 		FILE* compiler_pipe = create_dll_compilation_process();
@@ -385,7 +434,7 @@ void main()
 		FATAL(err == 0, "Failed to close compiler pipe. Error code: %d", err);
 	}
 
-	if (b_compile_source || b_create_c_file || b_create_exe_file)
+	if (b_create_c_file || b_create_exe_file || b_run_after_build)
 	{
 		FILE* infile = fopen(b_source_filename, "r");
 		FILE* outfile = b_create_c_file ? fopen(b_output_c_filename, "w") : create_compilation_process(b_run_arguments);
@@ -681,9 +730,8 @@ void handle_commandline_arguments()
 
 				replace(b_source_string, "b_create_c_file = 1;", "b_create_c_file = 0;");
 				replace(b_source_string, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
-				replace(b_source_string, "b_compile_source = 1;", "b_compile_source = 0;");
 				replace(b_source_string, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
-				replace(b_source_string, "b_compile_dll = 0;", "b_compile_dll = 1;");
+				replace(b_source_string, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
 				replace(b_source_string, "b_verbose = 1;", "b_verbose = 0;");
 				replace(b_source_string, "b_run_after_build = 1;", "b_run_after_build = 0;");
 
@@ -1426,7 +1474,7 @@ void tetris_update(Tetris* tetris)
 
 	{
 		i64 t = microseconds();
-		printf("fall: %lld, dt: %lld, t: %lld, ct: %lld, -:%lld\n", tetris->fall_timer, tetris->delta_time_us, t, tetris->current_time_us, t - tetris->current_time_us);
+		//printf("fall: %lld, dt: %lld, t: %lld, ct: %lld, -:%lld\n", tetris->fall_timer, tetris->delta_time_us, t, tetris->current_time_us, t - tetris->current_time_us);
 		tetris->delta_time_us = t - tetris->current_time_us;
 		tetris->current_time_us = t;
 	}
