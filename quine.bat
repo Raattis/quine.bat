@@ -519,6 +519,7 @@ typedef struct
 #include <stdio.h>
 #include <windows.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define SEGMENT_NAME "source"
 #define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
@@ -570,16 +571,16 @@ void replace(const char* string, const char* original, const char* replacement)
 		match[i] = replacement[i];
 }
 
-size_t scan_includes(char* source_file, char** files_to_watch, size_t files_to_watch_count, size_t written)
-{
-	if (written == 0 && files_to_watch[0] == 0)
-		printf("Watching '%s' for changes.\n", source_file);
+enum { debug_printing_verbose = 0 };
 
-	files_to_watch[written] = source_file;
-	written += 1;
+size_t scan_includes(const char* source_file, char** files_to_watch, size_t files_to_watch_count, size_t written)
+{
+	if (debug_printing_verbose)
+		printf("scan_includes('%s', %lld)\n", source_file, written);
 
 	char buffer[1024] = {0};
 
+	size_t first_written = written;
 	FILE* infile = fopen(source_file, "r");
 	while (fgets(buffer, sizeof(buffer), infile))
 	{
@@ -604,24 +605,137 @@ size_t scan_includes(char* source_file, char** files_to_watch, size_t files_to_w
 		if (found)
 			continue;
 
-		char* include_file = files_to_watch[written];
-		if (include_file == 0 || strncmp(include_file, begin, end - begin) != 0)
+		char* existing_file = files_to_watch[written];
+		if (existing_file == 0 || strncmp(existing_file, begin, end - begin) != 0)
 		{
 			extern void free(void*);
 			extern void* malloc(size_t);
-			if (include_file != 0)
-				free(include_file);
+			if (existing_file != 0)
+				free(existing_file);
 
-			include_file = (char*)malloc(end - begin);
-			strncpy(include_file, begin, end - begin);
-			include_file[end - begin] = 0;
+			size_t length = end - begin;
+			existing_file = (char*)malloc(length);
+			strncpy(existing_file, begin, length);
+			existing_file[length] = 0;
 
-			printf("Watching '%s' for changes.\n", include_file);
+			printf("Watching '%s' for changes.\n", existing_file);
+
+			files_to_watch[written] = existing_file;
 		}
-		written = scan_includes(include_file, files_to_watch, files_to_watch_count, written);
+		written += 1;
+	}
+	fclose(infile);
+	
+	for (size_t i = first_written, end = written; i < end; ++i)
+	{
+		written = scan_includes(files_to_watch[i], files_to_watch, files_to_watch_count, written);
 	}
 
 	return written;
+}
+
+size_t find_corresponding_source_files(const char** includes, size_t includes_count, char** sources, size_t sources_count, size_t written_sources)
+{
+	if (debug_printing_verbose)
+		printf("find_corresponding_source_files(%lld, %lld)\n", includes_count, written_sources);
+	
+	char buffer[1024] = {0};
+	for (int i = 0; i < includes_count && written_sources < sources_count; ++i)
+	{
+		printf("checking '%s'\n", includes[i]);
+		strcpy(buffer, includes[i]);
+		char* ext = strstr(buffer, ".h");
+		if (!ext)
+			continue;
+
+		ext[1] = 'c';
+		
+		char* existing_file = sources[written_sources];
+		if (existing_file != 0 && strcmp(existing_file, buffer) == 0)
+		{
+			written_sources += 1;
+			continue;
+		}
+		
+		struct stat dummy;
+		if (stat(buffer, &dummy) == 0)
+		{
+			extern void free(void*);
+			extern void* malloc(size_t);
+			if (existing_file != 0)
+				free(existing_file);
+			
+			existing_file = (char*)malloc(strlen(buffer));
+			strcpy(existing_file, buffer);
+
+			sources[written_sources] = existing_file;
+			written_sources += 1;
+		}
+	}
+	
+	return written_sources;
+}
+
+struct headers_and_sources {
+	const char* headers[256];
+	const char* sources[256];
+	size_t sources_count;
+	size_t headers_count;
+};
+
+void get_headers_and_sources(const char* main_source_file, struct headers_and_sources* headers_and_sources)
+{
+	size_t headers_buffer_size = sizeof(headers_and_sources->headers) / sizeof(headers_and_sources->headers[0]);
+	size_t sources_buffer_size = sizeof(headers_and_sources->sources) / sizeof(headers_and_sources->sources[0]);
+	headers_and_sources->sources[0] = main_source_file;
+	headers_and_sources->sources_count = 1;
+	headers_and_sources->headers_count = 0;
+	for (size_t i = 0; i < headers_and_sources->sources_count; ++i)
+	{
+		const char* source = headers_and_sources->sources[i];
+		if (debug_printing_verbose)
+			printf("Scanning '%s'\n", source);
+		
+		size_t prev_headers_count = headers_and_sources->headers_count;
+		
+		headers_and_sources->headers_count
+			= scan_includes(
+				source,
+				headers_and_sources->headers,
+				headers_buffer_size,
+				headers_and_sources->headers_count);
+		
+		headers_and_sources->sources_count
+			= find_corresponding_source_files(
+				headers_and_sources->headers + prev_headers_count,
+				headers_and_sources->headers_count - prev_headers_count,
+				headers_and_sources->sources,
+				sources_buffer_size,
+				headers_and_sources->sources_count);
+	}
+}
+
+int is_anything_newer_than(const char* executable_file, struct headers_and_sources* headers_and_sources)
+{
+	for (size_t i = 0; i < headers_and_sources->sources_count; ++i)
+	{
+		if (cmp_modified_times(executable_file, headers_and_sources->sources[i]) < 0)
+		{
+			printf("Timestamp of '%s' was newer than '%s'\n", headers_and_sources->sources[i], dll_filename);
+			return 1;
+		}
+	}
+
+	for (size_t i = 0; i < headers_and_sources->headers_count; ++i)
+	{
+		if (cmp_modified_times(executable_file, headers_and_sources->headers[i]) < 0)
+		{
+			printf("Timestamp of '%s' was newer than '%s'\n", headers_and_sources->headers[i], dll_filename);
+			return 1;
+		}
+	}
+	
+	return 0;
 }
 
 void handle_commandline_arguments()
@@ -630,7 +744,9 @@ void handle_commandline_arguments()
 	char* runtime_arguments_after = strstr(command_line, " - ");
 	if (runtime_arguments_after)
 		command_line = runtime_arguments_after + 3;
-	printf("%s\n", command_line);
+	
+	if (debug_printing_verbose)
+		printf("%s\n", command_line);
 
 	{
 		int len = 0;
@@ -684,10 +800,11 @@ void handle_commandline_arguments()
 	}
 	else if(strstr(command_line, "--dll"))
 	{
-		char* files_to_watch[256] = {0};
-		size_t files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
-
 		void* malloc(size_t);
+		struct headers_and_sources* headers_and_sources = (struct headers_and_sources*)malloc(sizeof(struct headers_and_sources));
+		memset(headers_and_sources, 0, sizeof(*headers_and_sources));
+		get_headers_and_sources(bat_filename, headers_and_sources);
+
 		void* user_buffer = malloc(1000);
 		int force_recompile = 0;
 
@@ -702,21 +819,10 @@ void handle_commandline_arguments()
 		{
 			int was_recompiled = 0;
 
-			int any_file_modified = 0;
-			for (size_t i = 0; i < files_to_watch_count; ++i)
-			{
-				if (force_recompile) 
-					break;
-				
-				if (cmp_modified_times(dll_filename, files_to_watch[i]) < 0)
-				{
-					printf("Timestamp of '%s' was newer than '%s'\n", files_to_watch[i], dll_filename);
-					any_file_modified = 1;
-					break;
-				}
-			}
-
-			if (force_recompile || any_file_modified)
+			if (!force_recompile && is_anything_newer_than(dll_filename, headers_and_sources))
+				force_recompile = 1;
+			
+			if (force_recompile)
 			{
 				printf("Recompiling '%s'\n", dll_filename);
 				if (hModule)
@@ -742,6 +848,8 @@ void handle_commandline_arguments()
 				replace(b_source_string, "b_verbose = 1;", "b_verbose = 0;");
 				replace(b_source_string, "b_run_after_build = 1;", "b_run_after_build = 0;");
 
+				clock_t c = clock();
+
 				FILE* compiler_pipe = popen("tcc.exe - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi", "w");
 				fprintf(compiler_pipe, prefix, bat_filename, dll_filename, bat_filename); 
 				fputs(b_source_string, compiler_pipe);
@@ -754,6 +862,9 @@ void handle_commandline_arguments()
 					continue;
 				}
 
+				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
+				printf("Recompilation took: %lld.%03lld s\n", milliseconds/1000ull, milliseconds%1000ull);
+
 				hModule = LoadLibrary(dll_filename);
 				if (!hModule)
 				{
@@ -762,7 +873,7 @@ void handle_commandline_arguments()
 					continue;
 				}
 
-				files_to_watch_count = scan_includes(bat_filename, files_to_watch, 256, 0);
+				get_headers_and_sources(bat_filename, headers_and_sources);
 
 				force_recompile = 0;
 				was_recompiled = 1;
@@ -1394,7 +1505,7 @@ void tetris_draw(Drawer drawer, Tetris* tetris)
 	int screen_height = screen_rect.bottom - screen_rect.top;
 	int h = (screen_height - 20) / TetrisHeight;
 	int w = h;
-	int margin = w/4;
+	int margin = w/2;
 	rect(drawer, 0, 0, w * TetrisWidth + margin*2, w * TetrisHeight + margin*2, 70,10,50);
 
 	TetrisPiece shadow_piece = tetris->current_piece;
