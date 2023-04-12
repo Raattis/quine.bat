@@ -1,7 +1,8 @@
 : " This is the beginning of a multiline comment in sh and a valid label in batch.
 @goto batch_bootstrap_builder "
 if false; then */
-#error Remember to insert "#if 0" into the compiler input pipe or skip the first 5 lines when compiling this file.
+#error Remember to insert "#if 0" into the compiler input pipe or skip the first 6 lines when compiling this file.
+// Notepad++ run command: cmd /c 'cd /d $(CURRENT_DIRECTORY) &amp;&amp; $(FULL_CURRENT_PATH)'
 #endif // GOTO_BOOTSTRAP_BUILDER
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -314,7 +315,7 @@ void main()
 				fputs(buffer, out);
 			err = pclose(preprocessor_result);
 			FATAL(err == 0, "Failed to preprocess builder.");
-				
+
 			remove(temp_filename);
 
 			fputs("#endif // BUILDER\n", out);
@@ -625,7 +626,7 @@ size_t scan_includes(const char* source_file, char** files_to_watch, size_t file
 		written += 1;
 	}
 	fclose(infile);
-	
+
 	for (size_t i = first_written, end = written; i < end; ++i)
 	{
 		written = scan_includes(files_to_watch[i], files_to_watch, files_to_watch_count, written);
@@ -638,7 +639,7 @@ size_t find_corresponding_source_files(const char** includes, size_t includes_co
 {
 	if (debug_printing_verbose)
 		printf("find_corresponding_source_files(%lld, %lld)\n", includes_count, written_sources);
-	
+
 	char buffer[1024] = {0};
 	for (int i = 0; i < includes_count && written_sources < sources_count; ++i)
 	{
@@ -649,14 +650,14 @@ size_t find_corresponding_source_files(const char** includes, size_t includes_co
 			continue;
 
 		ext[1] = 'c';
-		
+
 		char* existing_file = sources[written_sources];
 		if (existing_file != 0 && strcmp(existing_file, buffer) == 0)
 		{
 			written_sources += 1;
 			continue;
 		}
-		
+
 		struct stat dummy;
 		if (stat(buffer, &dummy) == 0)
 		{
@@ -664,7 +665,7 @@ size_t find_corresponding_source_files(const char** includes, size_t includes_co
 			extern void* malloc(size_t);
 			if (existing_file != 0)
 				free(existing_file);
-			
+
 			existing_file = (char*)malloc(strlen(buffer));
 			strcpy(existing_file, buffer);
 
@@ -672,7 +673,7 @@ size_t find_corresponding_source_files(const char** includes, size_t includes_co
 			written_sources += 1;
 		}
 	}
-	
+
 	return written_sources;
 }
 
@@ -695,16 +696,16 @@ void get_headers_and_sources(const char* main_source_file, struct headers_and_so
 		const char* source = headers_and_sources->sources[i];
 		if (debug_printing_verbose)
 			printf("Scanning '%s'\n", source);
-		
+
 		size_t prev_headers_count = headers_and_sources->headers_count;
-		
+
 		headers_and_sources->headers_count
 			= scan_includes(
 				source,
 				headers_and_sources->headers,
 				headers_buffer_size,
 				headers_and_sources->headers_count);
-		
+
 		headers_and_sources->sources_count
 			= find_corresponding_source_files(
 				headers_and_sources->headers + prev_headers_count,
@@ -734,7 +735,7 @@ int is_anything_newer_than(const char* executable_file, struct headers_and_sourc
 			return 1;
 		}
 	}
-	
+
 	return 0;
 }
 
@@ -744,7 +745,7 @@ void handle_commandline_arguments()
 	char* runtime_arguments_after = strstr(command_line, " - ");
 	if (runtime_arguments_after)
 		command_line = runtime_arguments_after + 3;
-	
+
 	if (debug_printing_verbose)
 		printf("%s\n", command_line);
 
@@ -821,7 +822,7 @@ void handle_commandline_arguments()
 
 			if (!force_recompile && is_anything_newer_than(dll_filename, headers_and_sources))
 				force_recompile = 1;
-			
+
 			if (force_recompile)
 			{
 				printf("Recompiling '%s'\n", dll_filename);
@@ -1140,9 +1141,9 @@ typedef struct
 typedef signed long long i64;
 typedef struct
 {
+	int magic_number;
 	TetrisPiece current_piece;
 	unsigned char board[TetrisWidth * TetrisHeight];
-	int difficulty;
 	int lines_cleared;
 	int score;
 	i64 current_time_us;
@@ -1571,30 +1572,26 @@ void tetris_draw(Drawer drawer, Tetris* tetris)
 		text(drawer, drawer.screen_width / 2, 60, "Game Over!", -1);
 }
 
-void tetris_setup(Tetris* tetris)
+int tetris_update(Tetris* tetris)
 {
-	memset(tetris, 0, sizeof *tetris);
-	tetris->current_time_us =  microseconds();
-	tetris->fall_timer = 1000 * 1000; // 1 second
-	tetris->current_piece.x = 5;
-	tetris->difficulty = 1;
-}
-
-void tetris_update(Tetris* tetris)
-{
-	if (tetris->game_over)
+	if (tetris->magic_number != StateInitializedMagicNumber
+		|| (tetris->game_over && tetris->input_drop))
 	{
-		if (tetris->input_drop)
-			tetris_setup(tetris);
-		return;
+		memset(tetris, 0, sizeof *tetris);
+		tetris->magic_number = StateInitializedMagicNumber;
+		tetris->current_time_us =  microseconds();
+		tetris->fall_timer = 1000 * 1000; // 1 second
+		tetris->current_piece.x = 5;
+		return 1;
 	}
-	
-	i64 delta_time_us = 0;
+
+	if (tetris->game_over)
+		return 0;
 
 	{
 		i64 t = microseconds();
-		delta_time_us = t - tetris->current_time_us;
-		//printf("fall: %lld, dt: %lld, t: %lld, ct: %lld, -:%lld\n", tetris->fall_timer, delta_time_us, t, tetris->current_time_us, t - tetris->current_time_us);
+		tetris->fall_timer -= t - tetris->current_time_us;
+		//printf("fall: %lld, t: %lld, ct: %lld, -:%lld\n", tetris->fall_timer, t, tetris->current_time_us, t - tetris->current_time_us);
 		tetris->current_time_us = t;
 	}
 
@@ -1605,26 +1602,24 @@ void tetris_update(Tetris* tetris)
 	int drop = tetris->input_drop;
 	tetris->input_left = tetris->input_right = tetris->input_down = tetris->input_rotate = tetris->input_drop = 0;
 
-	tetris->fall_timer -= delta_time_us;
-
-	i64 drop_rate = 1000 * 1000 / tetris->difficulty;
+	int difficulty = 1 + tetris->lines_cleared / 10;
+	i64 drop_delay = 1000 * 1000 / difficulty;
 	if (drop)
 	{
-		tetris->fall_timer = drop_rate;
+		tetris->fall_timer = drop_delay;
 	}
 	else if (move_down)
 	{
-		tetris->fall_timer = drop_rate;
+		tetris->fall_timer = drop_delay;
 		tetris->score += 1;
 	}
 	else if (tetris->fall_timer <= 0)
 	{
 		move_down = 1;
-		tetris->fall_timer += drop_rate;
+		tetris->fall_timer += drop_delay;
 		if (tetris->fall_timer < 0)
-			tetris->fall_timer = drop_rate; // No double drops if the game was paused etc.
+			tetris->fall_timer = drop_delay; // No double drops if the game was paused etc.
 	}
-
 
 	if (rotate)
 	{
@@ -1667,7 +1662,7 @@ void tetris_update(Tetris* tetris)
 			}
 
 			// destroy
-			int lines_cleared = 0;
+			int clears = 0;
 			for (int y = TetrisHeight; y-- > 0;)
 			{
 				int block_count = 0;
@@ -1678,17 +1673,16 @@ void tetris_update(Tetris* tetris)
 						block_count += 1;
 
 					tetris->board[x + y * TetrisWidth] = 0;
-					tetris->board[x + (y + lines_cleared) * TetrisWidth] = val;
+					tetris->board[x + (y + clears) * TetrisWidth] = val;
 				}
 
 				if (block_count == 10)
-					lines_cleared += 1;
+					clears += 1;
 			}
 
 			// meta
-			tetris->lines_cleared += lines_cleared;
-			tetris->score += lines_cleared * lines_cleared * 100 * tetris->difficulty;
-			tetris->difficulty = 1 + tetris->lines_cleared / 10;
+			tetris->lines_cleared += clears;
+			tetris->score += clears * clears * 100 * difficulty;
 
 			// new piece
 			tetris->current_piece.type = (tetris->current_piece.type + 1) % 7;
@@ -1703,6 +1697,8 @@ void tetris_update(Tetris* tetris)
 			}
 		}
 	}
+
+	return move_down || move_left || move_right || move_down || rotate || drop;
 }
 
 static void setup(State* state)
@@ -1722,8 +1718,6 @@ static void setup(State* state)
 	state->x = 200;
 	state->y = 150;
 
-	tetris_setup(&state->tetris);
-
 	create_window(state);
 
 	take_screenshot(state->hWnd);
@@ -1737,14 +1731,15 @@ void tick(State* state)
 	state->x = 200;
 	state->y = 100;
 
-	tetris_update(&state->tetris);
-
-	state->redraw_requested = 1;
+	if (tetris_update(&state->tetris))
+		state->redraw_requested = 1;
 }
 
 __declspec(dllexport) void update(Communication* communication)
 {
 	FATAL(sizeof(State) <= communication->buffer_size, "State is larger than the buffer. %lld <= %lld", sizeof(State), communication->buffer_size);
+
+	i64 t = microseconds();
 
 	State* state = (State*)communication->buffer;
 	setup(state);
@@ -1756,13 +1751,19 @@ __declspec(dllexport) void update(Communication* communication)
 	tick(state);
 
 	if (state->hWnd && (communication->was_recompiled || state->redraw_requested))
+	{
+		state->redraw_requested = 0;
 		RedrawWindow(state->hWnd, NULL, NULL, RDW_INVALIDATE); // Add "|RDW_ERASE" to see the flicker that is currently hidden by double buffering the draw target.
+	}
 
 	if (poll_messages(state) != 0)
 		communication->stop = 1;
 
 	if (state->window_closed)
 		communication->stop = 1;
+
+	i64 d = microseconds() - t;
+	printf("%lldms\r", (d/1000) % 1000);
 
 	Sleep(16);
 }
