@@ -1,4 +1,4 @@
-: " This is the beginning of a multiline comment in sh and a valid label in batch.
+: " In sh this syntax begins a multiline comment, whereas in batch it's a valid label that gets ignored.
 @goto batch_bootstrap_builder "
 if false; then */
 #error Remember to insert "#if 0" into the compiler input pipe or skip the first 6 lines when compiling this file.
@@ -11,8 +11,8 @@ if false; then */
 /*
 fi # sh_bootstrap_builder
 
-#Did you know that hashbang doesn't have to be on the first line of a file? Wild, right! "
-#!/bin/sh
+# Did you know that hashbang doesn't have to be on the first line of a file? Wild, right! "
+#!/usr/bin/env sh
 
 compiler_executable=gcc
 me=`basename "$0"`
