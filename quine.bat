@@ -39,6 +39,7 @@ if test $execution_exit_status -ne 0; then echo "$builder_executable exited with
 # -run -bench -nostdlib -lmsvcrt(?) -nostdinc -Iinclude
 exit 0
 
+///////////////////////////////////////////////////////////////////////////////
 
 :batch_bootstrap_builder
 @echo off
