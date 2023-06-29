@@ -11,7 +11,7 @@ if false; then */
 /*
 fi # sh_bootstrap_builder
 
-# Did you know that hashbang doesn't have to be on the first line of a file? Wild, right! "
+# Did you know that hashbang doesn't have to be on the first line of a file? Wild, right!
 #!/usr/bin/env sh
 
 compiler_executable=gcc
@@ -162,7 +162,7 @@ static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib 
 
 static char buffer[1024 * 1024];
 
-int insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename, int* line_number)
+void insert_snippet(const char* start, const char* stop, FILE* infile, FILE* outfile, const char* input_filename, int* line_number)
 {
 	FATAL(infile, "Infile is not falid: %s.", input_filename);
 	if (start) {
@@ -783,7 +783,7 @@ void handle_commandline_arguments()
 	}
 	else if (strstr(command_line, "--print_source"))
 	{
-		extern const char* b_source_string;
+		extern char* b_source_string;
 		printf("%s", b_source_string);
 
 		finished();
@@ -793,7 +793,7 @@ void handle_commandline_arguments()
 		FILE* out = fopen(bat_new_filename, "w");
 		FATAL(out, "Failed to get filename from GetCommandLine(): '%s'", command_line);
 
-		extern const char* b_source_string;
+		extern char* b_source_string;
 		fputs(b_source_string, out);
 		int err = fclose(out);
 		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_new_filename, err);
@@ -1770,4 +1770,3 @@ __declspec(dllexport) void update(Communication* communication)
 }
 
 #endif // DLL
-
