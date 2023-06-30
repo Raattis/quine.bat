@@ -11,7 +11,7 @@ if false; then */
 /*
 fi # sh_bootstrap_builder
 
-# Did you know that hashbang doesn't have to be on the first line of a file? Wild, right!
+# Did you know that hashbang doesn't have to be on the first line of a file? Wild, right! "
 #!/usr/bin/env sh
 
 compiler_executable=gcc
@@ -419,7 +419,7 @@ void main()
 
 		if (b_verbose) printf("Finished creating a package.");
 
-		exit(0);
+		return;
 	}
 
 	if (b_create_dll_file)
@@ -460,13 +460,13 @@ void main()
 			{
 				int err = compile(b_output_c_filename, b_output_exe_filename);
 				if (err != 0)
-					FATAL(0, "Failed to compile created '%s'.", b_output_c_filename);
+					FATAL(0, "Failed to compile created '%s'. Err: %d", b_output_c_filename, err);
 			}
 			else if (b_run_after_build)
 			{
 				int err = compile_and_run(b_output_c_filename);
 				if (err != 0)
-					FATAL(0, "Error encountered while doing compile&run for created '%s'.", b_output_c_filename);
+					FATAL(0, "Error encountered while doing compile&run for created '%s'. Err: %d", b_output_c_filename, err);
 			}
 		}
 		else
@@ -492,8 +492,6 @@ void main()
 
 	if (b_verbose)
 		printf("%s builder successfully finished.\n", b_source_filename);
-
-	exit(0);
 }
 void _runmain() { main(); }
 //void _start() { main(); }
@@ -547,11 +545,6 @@ char exe_filename[1024];
 char bat_filename[1024];
 char bat_new_filename[1024];
 char dll_filename[1024];
-static void finished()
-{
-	void exit(int);
-	exit(0);
-}
 
 void* load_func(HMODULE hModule, const char* dll_filename, const char* func_name)
 {
@@ -679,8 +672,8 @@ size_t find_corresponding_source_files(const char** includes, size_t includes_co
 }
 
 struct headers_and_sources {
-	const char* headers[256];
-	const char* sources[256];
+	char* headers[256];
+	char* sources[256];
 	size_t sources_count;
 	size_t headers_count;
 };
@@ -689,7 +682,10 @@ void get_headers_and_sources(const char* main_source_file, struct headers_and_so
 {
 	size_t headers_buffer_size = sizeof(headers_and_sources->headers) / sizeof(headers_and_sources->headers[0]);
 	size_t sources_buffer_size = sizeof(headers_and_sources->sources) / sizeof(headers_and_sources->sources[0]);
-	headers_and_sources->sources[0] = main_source_file;
+	void* malloc(size_t);
+	char* main_source_file_copy = malloc(strlen(main_source_file) + 1);
+	strcpy(main_source_file_copy, main_source_file);
+	headers_and_sources->sources[0] = main_source_file_copy;
 	headers_and_sources->sources_count = 1;
 	headers_and_sources->headers_count = 0;
 	for (size_t i = 0; i < headers_and_sources->sources_count; ++i)
@@ -786,7 +782,7 @@ void handle_commandline_arguments()
 		extern char* b_source_string;
 		printf("%s", b_source_string);
 
-		finished();
+		return;
 	}
 	else if (strstr(command_line, "--create_builder"))
 	{
@@ -798,7 +794,7 @@ void handle_commandline_arguments()
 		int err = fclose(out);
 		FATAL(err == 0, "Failed to close file '%s'. Error code: %d", bat_new_filename, err);
 
-		finished();
+		return;
 	}
 	else if(strstr(command_line, "--dll"))
 	{
@@ -859,9 +855,16 @@ void handle_commandline_arguments()
 				int err = pclose(compiler_pipe);
 				if (err != 0)
 				{
-					fprintf(stderr, "Failed to recompile %s using included source code.\n", dll_filename);
-					Sleep(2000);
-					continue;
+					if (err == 256)
+					{
+						fprintf(stderr, "WARNING: Recompiling %s returned %d for some reason. Carrying on anyway.\n", dll_filename, err);
+					}
+					else
+					{
+						fprintf(stderr, "Failed to recompile %s using included source code. Err: %d\n", dll_filename, err);
+						Sleep(2000);
+						continue;
+					}
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
@@ -905,7 +908,7 @@ void handle_commandline_arguments()
 		}
 
 		FreeLibrary(hModule);
-		finished();
+		return;
 	}
 
 	{
@@ -930,7 +933,7 @@ void handle_commandline_arguments()
 		printf("\n" "    --dll\t\tCreates a runtime recompilation loop that reacts to changes in the '%s' file.", bat_filename);
 		printf("\n\n");
 
-		finished();
+		return;
 	}
 }
 
