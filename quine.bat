@@ -855,16 +855,9 @@ void handle_commandline_arguments()
 				int err = pclose(compiler_pipe);
 				if (err != 0)
 				{
-					if (err == 256)
-					{
-						fprintf(stderr, "WARNING: Recompiling %s returned %d for some reason. Carrying on anyway.\n", dll_filename, err);
-					}
-					else
-					{
-						fprintf(stderr, "Failed to recompile %s using included source code. Err: %d\n", dll_filename, err);
-						Sleep(2000);
-						continue;
-					}
+					fprintf(stderr, "Failed to recompile %s using included source code. Err: %d\n", dll_filename, err);
+					Sleep(2000);
+					continue;
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
