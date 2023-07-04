@@ -526,19 +526,26 @@ typedef struct
 #define SEGMENT_NAME "source"
 #define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
-int cmp_modified_times(const char* file1, const char* file2)
+typedef struct stat file_timestamp;
+
+void get_file_timestamp(file_timestamp* stamp, const char* file)
 {
-	struct stat buf1;
-	stat(file1, &buf1);
+	stat(file, stamp);
+}
 
-	struct stat buf2;
-	stat(file2, &buf2);
+int cmp_and_swap_timestamps(file_timestamp* stamp1, const char* file)
+{
+	file_timestamp stamp2;
+	get_file_timestamp(&stamp2, file);
 
-	if (buf1.st_mtime == buf2.st_mtime)
+	if (stamp1->st_mtime == stamp2.st_mtime)
 		return 0;
 
-	if (buf1.st_mtime < buf2.st_mtime)
+	if (stamp1->st_mtime < stamp2.st_mtime)
+	{
+		*stamp1 = stamp2;
 		return -1;
+	}
 
 	return 1;
 }
@@ -708,11 +715,11 @@ void get_headers_and_sources(const char* main_source_file, struct headers_and_so
 	}
 }
 
-int is_anything_newer_than(const char* executable_file, struct headers_and_sources* headers_and_sources)
+int get_any_newer_file_timestamp(file_timestamp* stamp, struct headers_and_sources* headers_and_sources)
 {
 	for (size_t i = 0; i < headers_and_sources->sources_count; ++i)
 	{
-		if (cmp_modified_times(executable_file, headers_and_sources->sources[i]) < 0)
+		if (cmp_and_swap_timestamps(stamp, headers_and_sources->sources[i]) < 0)
 		{
 			printf("Timestamp of '%s' was newer than '%s'\n", headers_and_sources->sources[i], dll_filename);
 			return 1;
@@ -721,7 +728,7 @@ int is_anything_newer_than(const char* executable_file, struct headers_and_sourc
 
 	for (size_t i = 0; i < headers_and_sources->headers_count; ++i)
 	{
-		if (cmp_modified_times(executable_file, headers_and_sources->headers[i]) < 0)
+		if (cmp_and_swap_timestamps(stamp, headers_and_sources->headers[i]) < 0)
 		{
 			printf("Timestamp of '%s' was newer than '%s'\n", headers_and_sources->headers[i], dll_filename);
 			return 1;
@@ -798,8 +805,11 @@ void handle_commandline_arguments()
 		memset(headers_and_sources, 0, sizeof(*headers_and_sources));
 		get_headers_and_sources(bat_filename, headers_and_sources);
 
+		file_timestamp newest_file_timestamp;
+		get_file_timestamp(&newest_file_timestamp, bat_filename);
+
 		void* user_buffer = malloc(1000);
-		int force_recompile = 0;
+		int force_recompile = 1;
 
 		typedef void (*UpdateFunc)(Communication* communication);
 		UpdateFunc update = 0;
@@ -810,7 +820,7 @@ void handle_commandline_arguments()
 		{
 			int was_recompiled = 0;
 
-			if (!force_recompile && is_anything_newer_than(dll_filename, headers_and_sources))
+			if (get_any_newer_file_timestamp(&newest_file_timestamp, headers_and_sources))
 				force_recompile = 1;
 
 			if (force_recompile)
@@ -834,22 +844,32 @@ void handle_commandline_arguments()
 				extern char* b_source_string;
 
 				static char* source_buffer = 0;
+				const int MAX_SOURCE_SIZE = 1024 * 1024 * 4; // 4 Mb
 				if (source_buffer == 0)
-					source_buffer = malloc(1024 * 1024 * 4);
+					source_buffer = malloc(MAX_SOURCE_SIZE);
 
 				printf("Writing prefix\n");
-				int len = sprintf(source_buffer, prefix, bat_filename, dll_filename, bat_filename);
+				int prefix_length = sprintf(source_buffer, prefix, bat_filename, dll_filename, bat_filename);
 
 				printf("Copying source\n");
-				char* src = source_buffer + len;
-				strcpy(source_buffer + len, b_source_string);
+				{
+					char* src = source_buffer + prefix_length;
+					int size_left = MAX_SOURCE_SIZE - prefix_length;
+					
+					FILE* src_file = fopen(bat_filename, "r");
+					size_t read_length = fread(src, sizeof(char), size_left, src_file);
+					fclose(src_file);
 
-				replace(src, "b_create_c_file = 1;", "b_create_c_file = 0;");
-				replace(src, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
-				replace(src, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
-				replace(src, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
-				replace(src, "b_verbose = 1;", "b_verbose = 0;");
-				replace(src, "b_run_after_build = 1;", "b_run_after_build = 0;");
+					FATAL(read_length + 1 < size_left, "%s is too big (%d B < %d B) to runtime compile.", bat_filename, read_length, size_left);
+
+					src[read_length] = 0;
+					replace(src, "b_create_c_file = 1;", "b_create_c_file = 0;");
+					replace(src, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
+					replace(src, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
+					replace(src, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
+					replace(src, "b_verbose = 1;", "b_verbose = 0;");
+					replace(src, "b_run_after_build = 1;", "b_run_after_build = 0;");
+				}
 
 				if (s)
 					tcc_delete(s);
@@ -862,18 +882,20 @@ void handle_commandline_arguments()
 
 				//tcc_set_options(s, "-vv -nostdlib -nostdinc");
 				//tcc_set_options(s, "-vv");
-				tcc_set_options(s, "-vv -nostdlib -nostdinc -Iinclude -Iinclude/winapi -Llib -lgdi32 -lmsvcrt -lkernel32 -luser32");
+				tcc_set_options(s, "-Iinclude -Iinclude/winapi -Llib -lgdi32 -lmsvcrt -lkernel32 -luser32");
 
+				tcc_add_sysinclude_path(s, "include");
+				tcc_add_sysinclude_path(s, "include/winapi");
 				tcc_add_include_path(s, "include");
 				tcc_add_include_path(s, "include/winapi");
 				//tcc_add_include_path(s, "libtcc");
 
 				tcc_set_lib_path(s, "lib");
 
-				tcc_add_library_path(s, "gdi32");
-				tcc_add_library_path(s, "msvcrt");
-				tcc_add_library_path(s, "kernel32");
-				tcc_add_library_path(s, "user32");
+				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\gdi32");
+				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\msvcrt");
+				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\kernel32");
+				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\user32");
 
 				//tcc_add_library_path(s, "libtcc");
 
@@ -902,9 +924,6 @@ void handle_commandline_arguments()
 					Sleep(5000);
 					continue;
 				}
-				
-				update(0);
-				exit(0);
 
 				get_headers_and_sources(bat_filename, headers_and_sources);
 
@@ -930,6 +949,8 @@ void handle_commandline_arguments()
 
 			if (communication.request_recompile != 0)
 				force_recompile = 1;
+
+			continue;
 		}
 
 		tcc_delete(s);
@@ -982,6 +1003,8 @@ void _runmain() { _start(); }
 
 #ifdef DLL
 
+//#define TEST_DLL
+#ifdef TEST_DLL
 #include <stdio.h>
 #include <windows.h>
 #include <time.h>
@@ -1803,5 +1826,19 @@ extern int update_test(int* i)
 	printf("Hello!");
 	return 0;
 }
+
+#else // #ifdef TEST_DLL
+
+#include <stdio.h>
+#include <windows.h>
+
+void update(Communication* communication)
+{
+	printf("HELLOAOAOAO!\n");
+	Sleep(500);
+	printf("Slept!!\n");
+}
+
+#endif // #ifdef TEST_DLL
 
 #endif // DLL
