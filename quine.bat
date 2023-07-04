@@ -815,6 +815,8 @@ void handle_commandline_arguments()
 
 			if (force_recompile)
 			{
+				clock_t c = clock();
+
 				printf("Recompiling '%s'\n", dll_filename);
 
 				const char prefix[] = ""
@@ -823,7 +825,8 @@ void handle_commandline_arguments()
 					"\n" "static const char* b_output_dll_filename = \"%s\";"
 					"\n" "static const char* b_output_c_filename = \"NOT_USED.c\";"
 					"\n" "static const char* b_compiler_executable_path = \"tcc.exe\";"
-					"\n" "#define BUILDER"
+					"\n" "#define SHARED_PREFIX"
+					"\n" "#define DLL"
 					"\n" "#line 0 \"%s\""
 					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
 					"\n";
@@ -834,7 +837,6 @@ void handle_commandline_arguments()
 				if (source_buffer == 0)
 					source_buffer = malloc(1024 * 1024 * 4);
 
-				
 				printf("Writing prefix\n");
 				int len = sprintf(source_buffer, prefix, bat_filename, dll_filename, bat_filename);
 
@@ -849,26 +851,31 @@ void handle_commandline_arguments()
 				replace(src, "b_verbose = 1;", "b_verbose = 0;");
 				replace(src, "b_run_after_build = 1;", "b_run_after_build = 0;");
 
-				clock_t c = clock();
-
 				if (s)
 					tcc_delete(s);
 
 				s = tcc_new();
 				FATAL(s, "Could not create tcc state\n");
 
-				//tcc_set_lib_path(s, "lib");
-				//tcc_set_lib_path(s, "libtcc");
-				//tcc_add_include_path(s, "include");
-				//tcc_add_include_path(s, "include/winapi");
-				//tcc_add_library_path(s, "msvcrt");
-				//tcc_add_library_path(s, "kernel32");
-				//tcc_add_library_path(s, "user32");
-				//tcc_add_library_path(s, "gdi32");
-				//tcc_add_library_path(s, "libtcc");
-
 				printf("tcc_set_output_type  \n");
 				tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
+
+				//tcc_set_options(s, "-vv -nostdlib -nostdinc");
+				//tcc_set_options(s, "-vv");
+				tcc_set_options(s, "-vv -nostdlib -nostdinc -Iinclude -Iinclude/winapi -Llib -lgdi32 -lmsvcrt -lkernel32 -luser32");
+
+				tcc_add_include_path(s, "include");
+				tcc_add_include_path(s, "include/winapi");
+				//tcc_add_include_path(s, "libtcc");
+
+				tcc_set_lib_path(s, "lib");
+
+				tcc_add_library_path(s, "gdi32");
+				tcc_add_library_path(s, "msvcrt");
+				tcc_add_library_path(s, "kernel32");
+				tcc_add_library_path(s, "user32");
+
+				//tcc_add_library_path(s, "libtcc");
 
 				printf("Compile\n");
 				if (-1 == tcc_compile_string(s, source_buffer))
@@ -878,6 +885,7 @@ void handle_commandline_arguments()
 					continue;
 				}
 
+				printf("Linking!\n");
 				int err;
 				if (0 > (err = tcc_relocate(s, TCC_RELOCATE_AUTO)))
 				{
@@ -887,9 +895,8 @@ void handle_commandline_arguments()
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
 				printf("Recompilation took: %lld.%03lld s\n", milliseconds/1000ull, milliseconds%1000ull);
 
-				//update = tcc_get_symbol(s, "update_test");
-				void* test = tcc_get_symbol(s, "update_test");
-				if (!test)
+				update = tcc_get_symbol(s, "update");
+				if (!update)
 				{
 					fprintf(stderr, "Failed to load the 'void update(Communication*)' symbol after recompilation.\n");
 					Sleep(5000);
