@@ -150,7 +150,7 @@ static const int b_verbose = 1;
 static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
 
 // Compiler arguments for building the SOURCE and DLL sections
-static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32";
+static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32 -Ilibtcc -Llibtcc -llibtcc";
 
 #include <signal.h>
 #include <stdio.h>
@@ -521,6 +521,8 @@ typedef struct
 #include <sys/stat.h>
 #include <time.h>
 
+#include <libtcc.h>
+
 #define SEGMENT_NAME "source"
 #define FATAL(x, ...) do { if (x) break; fprintf(stderr, "%s:%d: (" SEGMENT_NAME "/%s) FATAL: ", __FILE__, __LINE__, __FUNCTION__); fprintf(stderr, __VA_ARGS__ ); fprintf(stderr, "\n(%s)\n", #x); void exit(int); exit(1); } while(0)
 
@@ -545,13 +547,6 @@ char exe_filename[1024];
 char bat_filename[1024];
 char bat_new_filename[1024];
 char dll_filename[1024];
-
-void* load_func(HMODULE hModule, const char* dll_filename, const char* func_name)
-{
-	void* func = GetProcAddress(hModule, func_name);
-	FATAL(func, "Couldn't load '%s' from '%s'.", func_name, dll_filename);
-	return func;
-}
 
 void replace(const char* string, const char* original, const char* replacement)
 {
@@ -806,12 +801,10 @@ void handle_commandline_arguments()
 		void* user_buffer = malloc(1000);
 		int force_recompile = 0;
 
-		HMODULE hModule = LoadLibrary(dll_filename);
-		if (!hModule)
-		{
-			force_recompile = 1;
-			printf("Couldn't load '%s'. Forcing recompile.\n", dll_filename);
-		}
+		typedef void (*UpdateFunc)(Communication* communication);
+		UpdateFunc update = 0;
+
+		TCCState *s = 0;
 
 		for (;;)
 		{
@@ -823,8 +816,6 @@ void handle_commandline_arguments()
 			if (force_recompile)
 			{
 				printf("Recompiling '%s'\n", dll_filename);
-				if (hModule)
-					FreeLibrary(hModule);
 
 				const char prefix[] = ""
 					"\n" "static const char* b_source_filename = \"%s\";"
@@ -839,37 +830,74 @@ void handle_commandline_arguments()
 
 				extern char* b_source_string;
 
-				replace(b_source_string, "b_create_c_file = 1;", "b_create_c_file = 0;");
-				replace(b_source_string, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
-				replace(b_source_string, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
-				replace(b_source_string, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
-				replace(b_source_string, "b_verbose = 1;", "b_verbose = 0;");
-				replace(b_source_string, "b_run_after_build = 1;", "b_run_after_build = 0;");
+				static char* source_buffer = 0;
+				if (source_buffer == 0)
+					source_buffer = malloc(1024 * 1024 * 4);
+
+				
+				printf("Writing prefix\n");
+				int len = sprintf(source_buffer, prefix, bat_filename, dll_filename, bat_filename);
+
+				printf("Copying source\n");
+				char* src = source_buffer + len;
+				strcpy(source_buffer + len, b_source_string);
+
+				replace(src, "b_create_c_file = 1;", "b_create_c_file = 0;");
+				replace(src, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
+				replace(src, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
+				replace(src, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
+				replace(src, "b_verbose = 1;", "b_verbose = 0;");
+				replace(src, "b_run_after_build = 1;", "b_run_after_build = 0;");
 
 				clock_t c = clock();
 
-				FILE* compiler_pipe = popen("tcc.exe - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi", "w");
-				fprintf(compiler_pipe, prefix, bat_filename, dll_filename, bat_filename); 
-				fputs(b_source_string, compiler_pipe);
+				if (s)
+					tcc_delete(s);
 
-				int err = pclose(compiler_pipe);
-				if (err != 0)
+				s = tcc_new();
+				FATAL(s, "Could not create tcc state\n");
+
+				//tcc_set_lib_path(s, "lib");
+				//tcc_set_lib_path(s, "libtcc");
+				//tcc_add_include_path(s, "include");
+				//tcc_add_include_path(s, "include/winapi");
+				//tcc_add_library_path(s, "msvcrt");
+				//tcc_add_library_path(s, "kernel32");
+				//tcc_add_library_path(s, "user32");
+				//tcc_add_library_path(s, "gdi32");
+				//tcc_add_library_path(s, "libtcc");
+
+				printf("tcc_set_output_type  \n");
+				tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
+
+				printf("Compile\n");
+				if (-1 == tcc_compile_string(s, source_buffer))
 				{
-					fprintf(stderr, "Failed to recompile %s using included source code. Err: %d\n", dll_filename, err);
+					fprintf(stderr, "Failed to recompile included source code.\n");
 					Sleep(2000);
 					continue;
+				}
+
+				int err;
+				if (0 > (err = tcc_relocate(s, TCC_RELOCATE_AUTO)))
+				{
+					FATAL(0, "Failed to relocate. Err: %d", err);
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
 				printf("Recompilation took: %lld.%03lld s\n", milliseconds/1000ull, milliseconds%1000ull);
 
-				hModule = LoadLibrary(dll_filename);
-				if (!hModule)
+				//update = tcc_get_symbol(s, "update_test");
+				void* test = tcc_get_symbol(s, "update_test");
+				if (!test)
 				{
-					fprintf(stderr, "Error while loading %s. Error: 0x%X\n", dll_filename, GetLastError());
+					fprintf(stderr, "Failed to load the 'void update(Communication*)' symbol after recompilation.\n");
 					Sleep(5000);
 					continue;
 				}
+				
+				update(0);
+				exit(0);
 
 				get_headers_and_sources(bat_filename, headers_and_sources);
 
@@ -877,16 +905,13 @@ void handle_commandline_arguments()
 				was_recompiled = 1;
 			}
 
-			if (!hModule)
+			if (!update)
 			{
 				fprintf(stderr, "'%s' not loaded. Last error: 0x%X\n.", dll_filename, GetLastError());
 				force_recompile = 1;
 				Sleep(500);
 				continue;
 			}
-
-			typedef int (*UpdateFunc)(Communication* communication);
-			UpdateFunc update = (UpdateFunc)load_func(hModule, dll_filename, "update");
 
 			Communication communication = {0};
 			communication.was_recompiled = was_recompiled;
@@ -900,7 +925,7 @@ void handle_commandline_arguments()
 				force_recompile = 1;
 		}
 
-		FreeLibrary(hModule);
+		tcc_delete(s);
 		return;
 	}
 
@@ -1732,7 +1757,8 @@ void tick(State* state)
 		state->redraw_requested = 1;
 }
 
-__declspec(dllexport) void update(Communication* communication)
+//__declspec(dllexport) void update(Communication* communication)
+void update(Communication* communication)
 {
 	FATAL(sizeof(State) <= communication->buffer_size, "State is larger than the buffer. %lld <= %lld", sizeof(State), communication->buffer_size);
 
@@ -1763,6 +1789,12 @@ __declspec(dllexport) void update(Communication* communication)
 	printf("%lldms\r", (d/1000) % 1000);
 
 	Sleep(16);
+}
+
+extern int update_test(int* i)
+{
+	printf("Hello!");
+	return 0;
 }
 
 #endif // DLL
