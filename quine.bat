@@ -892,10 +892,10 @@ void handle_commandline_arguments()
 
 				tcc_set_lib_path(s, "lib");
 
-				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\gdi32");
-				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\msvcrt");
-				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\kernel32");
-				tcc_add_library_path(s, "R:\\Win\\Kirjastot\\Documents\\KOODAUS\\c\\package_manager_bat\\tcc\\lib\\user32");
+				tcc_add_library_path(s, "..\\tcc\\lib\\gdi32");
+				tcc_add_library_path(s, "..\\tcc\\lib\\msvcrt");
+				tcc_add_library_path(s, "..\\tcc\\lib\\kernel32");
+				tcc_add_library_path(s, "..\\tcc\\lib\\user32");
 
 				//tcc_add_library_path(s, "libtcc");
 
