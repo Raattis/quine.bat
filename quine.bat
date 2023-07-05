@@ -1041,7 +1041,7 @@ void handle_commandline_arguments()
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
-				printf("Recompilation took: %lld.%03lld s. Executable size in memory: %lld.%03lld KB\n", milliseconds/1000ull, milliseconds%1000ull, size / 1024ull, size % 1024ull);
+				printf("Recompilation took %lld.%03lld seconds. Executable size in memory %lld.%03lld KB\n", milliseconds/1000ull, milliseconds%1000ull, size / 1000ull, size % 1000ull);
 
 				update = tcc_get_symbol(s, "update");
 				if (!update)
