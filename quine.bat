@@ -147,7 +147,7 @@ static const int b_run_after_build = 1;
 static const int b_verbose = 1;
 
 // Arguments passed to the program built from SOURCE
-static const char* b_run_arguments = "--dll --!print_source --!create_builder --!help";
+static const char* b_run_arguments = "--run --!dll --!print_source --!create_builder --!help";
 
 // Compiler arguments for building the SOURCE and DLL sections
 static const char* b_compiler_arguments = "-Iinclude -Iinclude/winapi -nostdlib -nostdinc -lmsvcrt -lkernel32 -luser32 -lgdi32 -Ilibtcc -Llibtcc -llibtcc";
@@ -555,6 +555,13 @@ char bat_filename[1024];
 char bat_new_filename[1024];
 char dll_filename[1024];
 
+void* load_func(HMODULE hModule, const char* dll_filename, const char* func_name)
+{
+	void* func = GetProcAddress(hModule, func_name);
+	FATAL(func, "Couldn't load '%s' from '%s'.", func_name, dll_filename);
+	return func;
+}
+
 void replace(const char* string, const char* original, const char* replacement)
 {
 	FATAL(strlen(original) == strlen(replacement), "Non-equal length string replacements not implemented: %d != %d, (%s != %s)", strlen(original), strlen(replacement), original, replacement);
@@ -798,7 +805,113 @@ void handle_commandline_arguments()
 
 		return;
 	}
+
 	else if(strstr(command_line, "--dll"))
+	{
+		void* malloc(size_t);
+		struct headers_and_sources* headers_and_sources = (struct headers_and_sources*)malloc(sizeof(struct headers_and_sources));
+		memset(headers_and_sources, 0, sizeof(*headers_and_sources));
+		get_headers_and_sources(bat_filename, headers_and_sources);
+
+		void* user_buffer = malloc(1000);
+		int force_recompile = 1;
+
+		file_timestamp newest_file_timestamp;
+		get_file_timestamp(&newest_file_timestamp, dll_filename);
+
+		HMODULE hModule = 0;
+
+		for (;;)
+		{
+			int was_recompiled = 0;
+
+			if (get_any_newer_file_timestamp(&newest_file_timestamp, headers_and_sources))
+				force_recompile = 1;
+
+			if (force_recompile)
+			{
+				printf("Recompiling '%s'\n", dll_filename);
+				if (hModule)
+					FreeLibrary(hModule);
+
+				const char prefix[] = ""
+					"\n" "static const char* b_source_filename = \"%s\";"
+					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
+					"\n" "static const char* b_output_dll_filename = \"%s\";"
+					"\n" "static const char* b_output_c_filename = \"NOT_USED.c\";"
+					"\n" "static const char* b_compiler_executable_path = \"tcc.exe\";"
+					"\n" "#define BUILDER"
+					"\n" "#line 0 \"%s\""
+					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
+					"\n";
+
+				extern char* b_source_string;
+
+				replace(b_source_string, "b_create_c_file = 1;", "b_create_c_file = 0;");
+				replace(b_source_string, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
+				replace(b_source_string, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
+				replace(b_source_string, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
+				replace(b_source_string, "b_verbose = 1;", "b_verbose = 0;");
+				replace(b_source_string, "b_run_after_build = 1;", "b_run_after_build = 0;");
+
+				clock_t c = clock();
+
+				FILE* compiler_pipe = popen("tcc.exe - -run -nostdlib -lmsvcrt -nostdinc -Iinclude -Iinclude/winapi", "w");
+				fprintf(compiler_pipe, prefix, bat_filename, dll_filename, bat_filename); 
+				fputs(b_source_string, compiler_pipe);
+
+				int err = pclose(compiler_pipe);
+				if (err != 0)
+				{
+					fprintf(stderr, "Failed to recompile %s using included source code. Err: %d\n", dll_filename, err);
+					Sleep(2000);
+					continue;
+				}
+
+				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
+				printf("Recompilation took: %lld.%03lld s\n", milliseconds/1000ull, milliseconds%1000ull);
+
+				hModule = LoadLibrary(dll_filename);
+				if (!hModule)
+				{
+					fprintf(stderr, "Error while loading %s. Error: 0x%X\n", dll_filename, GetLastError());
+					Sleep(5000);
+					continue;
+				}
+
+				get_headers_and_sources(bat_filename, headers_and_sources);
+
+				force_recompile = 0;
+				was_recompiled = 1;
+			}
+
+			if (!hModule)
+			{
+				fprintf(stderr, "'%s' not loaded. Last error: 0x%X\n.", dll_filename, GetLastError());
+				force_recompile = 1;
+				Sleep(500);
+				continue;
+			}
+
+			typedef int (*UpdateFunc)(Communication* communication);
+			UpdateFunc update = (UpdateFunc)load_func(hModule, dll_filename, "dll_update");
+
+			Communication communication = {0};
+			communication.was_recompiled = was_recompiled;
+			communication.buffer = user_buffer;
+			communication.buffer_size = 1000;
+			update(&communication);
+			if (communication.stop != 0)
+				break;
+
+			if (communication.request_recompile != 0)
+				force_recompile = 1;
+		}
+
+		FreeLibrary(hModule);
+		return;
+	}
+	else if(strstr(command_line, "--run"))
 	{
 		void* malloc(size_t);
 		struct headers_and_sources* headers_and_sources = (struct headers_and_sources*)malloc(sizeof(struct headers_and_sources));
@@ -1780,7 +1893,6 @@ void tick(State* state)
 		state->redraw_requested = 1;
 }
 
-//__declspec(dllexport) void update(Communication* communication)
 void update(Communication* communication)
 {
 	FATAL(sizeof(State) <= communication->buffer_size, "State is larger than the buffer. %lld <= %lld", sizeof(State), communication->buffer_size);
@@ -1814,10 +1926,9 @@ void update(Communication* communication)
 	Sleep(16);
 }
 
-extern int update_test(int* i)
+__declspec(dllexport) void dll_update(Communication* communication)
 {
-	printf("Hello!");
-	return 0;
+	update(communication);
 }
 
 #endif // DLL
