@@ -926,7 +926,7 @@ void handle_commandline_arguments()
 
 		TCCState *s = 0;
 		const int compilation_result_buffer_size = 16 * 1024 * 1024;
-		char* compilation_result_buffer = malloc(compilation_result_buffer_size);
+		void* compilation_result_buffer = malloc(compilation_result_buffer_size);
 
 		for (;;)
 		{
@@ -992,7 +992,7 @@ void handle_commandline_arguments()
 
 				tcc_set_options(s, "-DDLL -DSHARED_PREFIX");
 
-				printf("Compile\n");
+				printf("Compiling\n");
 				if (-1 == tcc_compile_string(s, source_buffer))
 				{
 					fprintf(stderr, "Failed to recompile included source code.\n");
@@ -1001,11 +1001,11 @@ void handle_commandline_arguments()
 				}
 
 
-				printf("Checking result size!\n");
+				printf("Checking resulting size...\n");
 				int size = tcc_relocate(s, 0);
 				if (size < 0)
 				{
-					fprintf(stderr, "Failed get size for relocate (=link). Err: %d\n", size);
+					fprintf(stderr, "Failed get size for relocate (=linking). Err: %d\n", size);
 					Sleep(5000);
 					continue;
 				}
@@ -1013,9 +1013,16 @@ void handle_commandline_arguments()
 				{
 					if (size > compilation_result_buffer_size)
 					{
-						fprintf(stderr, "Compilation result doesn't fit the designated buffer. %d > %d\n", size, compilation_result_buffer_size);
-						Sleep(5000);
-						continue;
+						if (size > 1024 * 1024 * 1024)
+						{
+							fprintf(stderr, "Sanity check failed: Compilation result is %d bytes which is more than 1 GB.\n", size);
+							Sleep(5000);
+							continue;
+						}
+						
+						free(compilation_result_buffer);
+						compilation_result_buffer_size = size;
+						compilation_result_buffer = malloc(compilation_result_buffer_size);
 					}
 				}
 
@@ -1041,7 +1048,7 @@ void handle_commandline_arguments()
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
-				printf("Recompilation took %lld.%03lld seconds. Executable size in memory %lld.%03lld KB\n", milliseconds/1000ull, milliseconds%1000ull, size / 1000ull, size % 1000ull);
+				printf("Recompilation took %lld.%03lld seconds. Executable size in memory is %lld.%03lld KB\n", milliseconds/1000ull, milliseconds%1000ull, size / 1000ull, size % 1000ull);
 
 				update = tcc_get_symbol(s, "update");
 				if (!update)
@@ -1111,8 +1118,7 @@ void handle_commandline_arguments()
 
 LONG exception_handler(LPEXCEPTION_POINTERS p)
 {
-	//FATAL(0, "Exception!!!\n");
-	fprintf(stderr, "\nERROR: Exception!!!, %p\n", p);
+	FATAL(0, "Exception!!!\n");
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 
