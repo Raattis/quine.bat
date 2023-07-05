@@ -724,12 +724,13 @@ void get_headers_and_sources(const char* main_source_file, struct headers_and_so
 
 int get_any_newer_file_timestamp(file_timestamp* stamp, struct headers_and_sources* headers_and_sources)
 {
+	int found = 0;
 	for (size_t i = 0; i < headers_and_sources->sources_count; ++i)
 	{
 		if (cmp_and_swap_timestamps(stamp, headers_and_sources->sources[i]) < 0)
 		{
-			printf("Timestamp of '%s' was newer than '%s'\n", headers_and_sources->sources[i], dll_filename);
-			return 1;
+			printf("Timestamp of '%s' was newer than previous timestamp\n", headers_and_sources->sources[i]);
+			found = 1;
 		}
 	}
 
@@ -737,12 +738,12 @@ int get_any_newer_file_timestamp(file_timestamp* stamp, struct headers_and_sourc
 	{
 		if (cmp_and_swap_timestamps(stamp, headers_and_sources->headers[i]) < 0)
 		{
-			printf("Timestamp of '%s' was newer than '%s'\n", headers_and_sources->headers[i], dll_filename);
-			return 1;
+			printf("Timestamp of '%s' was newer than previous timestamp\n", headers_and_sources->sources[i]);
+			found = 1;
 		}
 	}
 
-	return 0;
+	return found;
 }
 
 void handle_commandline_arguments()
@@ -835,11 +836,6 @@ void handle_commandline_arguments()
 					FreeLibrary(hModule);
 
 				const char prefix[] = ""
-					"\n" "static const char* b_source_filename = \"%s\";"
-					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
-					"\n" "static const char* b_output_dll_filename = \"%s\";"
-					"\n" "static const char* b_output_c_filename = \"NOT_USED.c\";"
-					"\n" "static const char* b_compiler_executable_path = \"tcc.exe\";"
 					"\n" "#define BUILDER"
 					"\n" "#line 0 \"%s\""
 					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
@@ -911,6 +907,7 @@ void handle_commandline_arguments()
 		FreeLibrary(hModule);
 		return;
 	}
+
 	else if(strstr(command_line, "--run"))
 	{
 		void* malloc(size_t);
@@ -928,6 +925,8 @@ void handle_commandline_arguments()
 		UpdateFunc update = 0;
 
 		TCCState *s = 0;
+		const int compilation_result_buffer_size = 16 * 1024 * 1024;
+		char* compilation_result_buffer = malloc(compilation_result_buffer_size);
 
 		for (;;)
 		{
@@ -940,35 +939,25 @@ void handle_commandline_arguments()
 			{
 				clock_t c = clock();
 
-				printf("Recompiling '%s'\n", dll_filename);
-
-				const char prefix[] = ""
-					"\n" "static const char* b_source_filename = \"%s\";"
-					"\n" "static const char* b_output_exe_filename = \"NOT_USED.exe\";"
-					"\n" "static const char* b_output_dll_filename = \"%s\";"
-					"\n" "static const char* b_output_c_filename = \"NOT_USED.c\";"
-					"\n" "static const char* b_compiler_executable_path = \"tcc.exe\";"
-					"\n" "#define SHARED_PREFIX"
-					"\n" "#define DLL"
-					"\n" "#line 0 \"%s\""
-					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
-					"\n";
-
-				extern char* b_source_string;
+				printf("Recompiling '%s'\n", bat_filename);
 
 				static char* source_buffer = 0;
-				const int MAX_SOURCE_SIZE = 1024 * 1024 * 4; // 4 Mb
+				const int MAX_SOURCE_SIZE = 1024 * 1024 * 4; // 4 MB
 				if (source_buffer == 0)
 					source_buffer = malloc(MAX_SOURCE_SIZE);
 
 				printf("Writing prefix\n");
-				int prefix_length = sprintf(source_buffer, prefix, bat_filename, dll_filename, bat_filename);
+				int prefix_length = sprintf(source_buffer,
+					"\n" "#line 0 \"%s\""
+					"\n" "#if GOTO_BOOTSTRAP_BUILDER"
+					"\n"
+					, bat_filename);
 
 				printf("Copying source\n");
 				{
 					char* src = source_buffer + prefix_length;
 					int size_left = MAX_SOURCE_SIZE - prefix_length;
-					
+
 					FILE* src_file = fopen(bat_filename, "r");
 					size_t read_length = fread(src, sizeof(char), size_left, src_file);
 					fclose(src_file);
@@ -976,12 +965,6 @@ void handle_commandline_arguments()
 					FATAL(read_length + 1 < size_left, "%s is too big (%d B < %d B) to runtime compile.", bat_filename, read_length, size_left);
 
 					src[read_length] = 0;
-					replace(src, "b_create_c_file = 1;", "b_create_c_file = 0;");
-					replace(src, "b_create_preprocessed_builder = 1;", "b_create_preprocessed_builder = 0;");
-					replace(src, "b_create_exe_file = 1;", "b_create_exe_file = 0;");
-					replace(src, "b_create_dll_file = 0;", "b_create_dll_file = 1;");
-					replace(src, "b_verbose = 1;", "b_verbose = 0;");
-					replace(src, "b_run_after_build = 1;", "b_run_after_build = 0;");
 				}
 
 				if (s)
@@ -993,17 +976,21 @@ void handle_commandline_arguments()
 				printf("tcc_set_output_type  \n");
 				tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
 
-				tcc_set_options(s, "-vv -nostdlib -nostdinc");
+				//tcc_set_options(s, "-vv -nostdlib -nostdinc");
+				tcc_set_options(s, "-nostdlib -nostdinc");
 
 				tcc_add_include_path(s, "include");
 				tcc_add_include_path(s, "include/winapi");
 
 				tcc_add_library_path(s, "lib");
 
+				extern int tcc_add_library_err(TCCState *s, const char *f);
 				tcc_add_library_err(s, "gdi32");
 				tcc_add_library_err(s, "msvcrt");
 				tcc_add_library_err(s, "kernel32");
 				tcc_add_library_err(s, "user32");
+
+				tcc_set_options(s, "-DDLL -DSHARED_PREFIX");
 
 				printf("Compile\n");
 				if (-1 == tcc_compile_string(s, source_buffer))
@@ -1013,9 +1000,40 @@ void handle_commandline_arguments()
 					continue;
 				}
 
-				printf("Linking!\n");
-				int err;
-				if (0 > (err = tcc_relocate(s, TCC_RELOCATE_AUTO)))
+
+				printf("Checking result size!\n");
+				int size = tcc_relocate(s, 0);
+				if (size < 0)
+				{
+					fprintf(stderr, "Failed get size for relocate (=link). Err: %d\n", size);
+					Sleep(5000);
+					continue;
+				}
+				else
+				{
+					if (size > compilation_result_buffer_size)
+					{
+						fprintf(stderr, "Compilation result doesn't fit the designated buffer. %d > %d\n", size, compilation_result_buffer_size);
+						Sleep(5000);
+						continue;
+					}
+				}
+
+#ifdef _WIN32
+				DWORD old;
+				if (!VirtualProtect(compilation_result_buffer, compilation_result_buffer_size, PAGE_READWRITE, &old))
+				{
+					fprintf(stderr, "Couldn't unlock page protection. Old protection value: %d", old);
+					Sleep(5000);
+					continue;
+				}
+#else
+				#error "TODO: Copy non-windows memory protection undoing from tccrun.c set_pages_executable()"
+#endif
+
+				printf("Linking...\n");
+				int err = 0;
+				if (0 > (err = tcc_relocate(s, compilation_result_buffer)))
 				{
 					fprintf(stderr, "Failed to relocate (=link). Err: %d\n", err);
 					Sleep(5000);
@@ -1023,7 +1041,7 @@ void handle_commandline_arguments()
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
-				printf("Recompilation took: %lld.%03lld s\n", milliseconds/1000ull, milliseconds%1000ull);
+				printf("Recompilation took: %lld.%03lld s. Executable size in memory: %lld.%03lld KB\n", milliseconds/1000ull, milliseconds%1000ull, size / 1024ull, size % 1024ull);
 
 				update = tcc_get_symbol(s, "update");
 				if (!update)
@@ -1093,7 +1111,8 @@ void handle_commandline_arguments()
 
 LONG exception_handler(LPEXCEPTION_POINTERS p)
 {
-	FATAL(0, "Exception!!!\n");
+	//FATAL(0, "Exception!!!\n");
+	fprintf(stderr, "\nERROR: Exception!!!, %p\n", p);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 
