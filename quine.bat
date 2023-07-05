@@ -135,7 +135,7 @@ static const int b_create_preprocessed_builder = 0;
 static const int b_create_c_file = 0;
 
 // Outputs a .exe from the SOURCE section
-static const int b_create_exe_file = 0;
+static const int b_create_exe_file = 1;
 
 // Outputs a .dll file from the DLL section
 static const int b_create_dll_file = 0;
@@ -880,24 +880,17 @@ void handle_commandline_arguments()
 				printf("tcc_set_output_type  \n");
 				tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
 
-				//tcc_set_options(s, "-vv -nostdlib -nostdinc");
-				//tcc_set_options(s, "-vv");
-				tcc_set_options(s, "-Iinclude -Iinclude/winapi -Llib -lgdi32 -lmsvcrt -lkernel32 -luser32");
+				tcc_set_options(s, "-vv -nostdlib -nostdinc");
 
-				tcc_add_sysinclude_path(s, "include");
-				tcc_add_sysinclude_path(s, "include/winapi");
 				tcc_add_include_path(s, "include");
 				tcc_add_include_path(s, "include/winapi");
-				//tcc_add_include_path(s, "libtcc");
 
-				tcc_set_lib_path(s, "lib");
+				tcc_add_library_path(s, "lib");
 
-				tcc_add_library_path(s, "..\\tcc\\lib\\gdi32");
-				tcc_add_library_path(s, "..\\tcc\\lib\\msvcrt");
-				tcc_add_library_path(s, "..\\tcc\\lib\\kernel32");
-				tcc_add_library_path(s, "..\\tcc\\lib\\user32");
-
-				//tcc_add_library_path(s, "libtcc");
+				tcc_add_library_err(s, "gdi32");
+				tcc_add_library_err(s, "msvcrt");
+				tcc_add_library_err(s, "kernel32");
+				tcc_add_library_err(s, "user32");
 
 				printf("Compile\n");
 				if (-1 == tcc_compile_string(s, source_buffer))
@@ -911,7 +904,9 @@ void handle_commandline_arguments()
 				int err;
 				if (0 > (err = tcc_relocate(s, TCC_RELOCATE_AUTO)))
 				{
-					FATAL(0, "Failed to relocate. Err: %d", err);
+					fprintf(stderr, "Failed to relocate (=link). Err: %d\n", err);
+					Sleep(5000);
+					continue;
 				}
 
 				clock_t milliseconds = (clock() - c) * (1000ull / CLOCKS_PER_SEC);
@@ -1003,8 +998,6 @@ void _runmain() { _start(); }
 
 #ifdef DLL
 
-//#define TEST_DLL
-#ifdef TEST_DLL
 #include <stdio.h>
 #include <windows.h>
 #include <time.h>
@@ -1826,19 +1819,5 @@ extern int update_test(int* i)
 	printf("Hello!");
 	return 0;
 }
-
-#else // #ifdef TEST_DLL
-
-#include <stdio.h>
-#include <windows.h>
-
-void update(Communication* communication)
-{
-	printf("HELLOAOAOAO!\n");
-	Sleep(500);
-	printf("Slept!!\n");
-}
-
-#endif // #ifdef TEST_DLL
 
 #endif // DLL
